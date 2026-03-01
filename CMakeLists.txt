@@ -14,6 +14,10 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rd-party/googletest/CMakeLists.txt")
     message(FATAL_ERROR "The googletest submodule is missing! Please run: git submodule update --init --recursive")
 endif()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rd-party/json/CMakeLists.txt")
+    message(FATAL_ERROR "The nlohmann/json submodule is missing! Please run: git submodule update --init --recursive")
+endif()
+
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
     option(ENABLE_ASAN "Enable AddressSanitizer" ON)
 else()
@@ -29,7 +33,9 @@ endif()
 # Add submodules
 add_subdirectory(3rd-party/spdlog)
 add_subdirectory(3rd-party/googletest)
+add_subdirectory(3rd-party/json)
 
+find_package(CURL REQUIRED)
 # Include directories
 include_directories(include)
 
@@ -40,11 +46,13 @@ set(SOURCES
     src/config.cpp
     src/workspace.cpp
     src/logger.cpp
+    src/http.cpp
+    src/llm.cpp
 )
 
 # Main executable
 add_executable(agent ${SOURCES})
-target_link_libraries(agent PRIVATE spdlog::spdlog)
+target_link_libraries(agent PRIVATE spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 
 # Enable testing
 enable_testing()

@@ -2,47 +2,55 @@
 #include "cli.hpp"
 #include "logger.hpp"
 #include "workspace.hpp"
+#include "llm.hpp"
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    // 1. Initialize configuration with defaults, config file, and env vars
-    // Priority: Defaults < Config File < ENV
+    // 1. Config Init
     AgentConfig config = config_init(argc, argv);
 
-    // 2. Parse command line arguments (highest priority)
+    // 2. CLI Parse
     CliResult cli_res = cli_parse(argc, argv, config);
-    if (cli_res == CliResult::ExitSuccess) {
-        return 0; // Help or version requested
-    } else if (cli_res == CliResult::ExitFailure) {
-        return 1; // Parsing failed
-    }
+    if (cli_res == CliResult::ExitSuccess) return 0;
+    if (cli_res == CliResult::ExitFailure) return 1;
 
-    // 3. Initialize workspace
+    // 3. Workspace Init
     std::string ws_err;
     if (!workspace_init(&config, &ws_err)) {
+        // Provide actionable prompt
         std::cerr << "Agent Error: Failed to initialize workspace: " << ws_err << "\n";
+        std::cerr << "Action Required: Ensure the parent directory exists and you have write permissions.\n";
         return 1;
     }
 
-    // 4. Initialize logger
+    // 4. Logger Init
     logger_init(config.debug_mode);
 
-    // 5. Log configuration details (Debug level)
-    LOG_DEBUG("Configuration loaded:");
-    if (!config.config_file_path.empty()) {
-        LOG_DEBUG("  Config path: {}", config.config_file_path);
-    } else {
-        LOG_DEBUG("  Config path: (None)");
+    // 5. Validation Check
+    if (!config.api_key.has_value() || config.api_key.value().empty()) {
+        LOG_ERROR("API Key is missing. Action Required: Provide via --api-key <key> or NCA_API_KEY environment variable.");
+        return 1;
     }
-    LOG_DEBUG("  Workspace (rel): {}", config.workspace);
-    LOG_DEBUG("  Workspace (abs): {}", config.workspace_abs);
+
+    LOG_DEBUG("Configuration loaded:");
+    LOG_DEBUG("  Workspace: {}", config.workspace_abs);
     LOG_DEBUG("  Model: {}", config.model);
     LOG_DEBUG("  Base URL: {}", config.base_url);
-    LOG_DEBUG("  API Key: {}", config.api_key.has_value() ? "***" : "Not set");
     LOG_DEBUG("  Prompt: {}", config.prompt);
 
-    // 6. Stub for execution
-    LOG_INFO("准备调用模型处理任务: {}", config.prompt);
+    // 6. Execution: HTTP to LLM
+    LOG_INFO("Sending prompt to LLM: {}", config.prompt);
+    
+    std::string response_text;
+    std::string llm_err;
+    if (!llm_chat_completion(config, config.prompt, &response_text, &llm_err)) {
+        LOG_ERROR("LLM Request Failed: {}", llm_err);
+        return 1;
+    }
+
+    LOG_INFO("=== LLM Response ===");
+    std::cout << response_text << "\n";
+    LOG_INFO("====================");
 
     return 0;
 }
