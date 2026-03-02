@@ -7,6 +7,7 @@ set(TEST_SOURCES
     ../src/llm.cpp
     ../src/sse_parser.cpp
     ../src/tool_call_assembler.cpp
+    ../src/write_file.cpp
 )
 
 # CLI Test
@@ -55,9 +56,14 @@ add_executable(test_toolcall_assembler test_toolcall_assembler.cpp ${TEST_SOURCE
 target_link_libraries(test_toolcall_assembler PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_toolcall_assembler PRIVATE ../include)
 
+add_executable(test_write_file test_write_file.cpp ${TEST_SOURCES})
+target_link_libraries(test_write_file PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_write_file PRIVATE ../include)
+
 gtest_discover_tests(test_llm_parse)
 gtest_discover_tests(test_http_limits)
 gtest_discover_tests(test_sse_parser)
 gtest_discover_tests(test_stream_limits)
 gtest_discover_tests(test_llm_stream)
 gtest_discover_tests(test_toolcall_assembler)
+gtest_discover_tests(test_write_file)

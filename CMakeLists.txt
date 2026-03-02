@@ -50,6 +50,7 @@ set(SOURCES
     src/llm.cpp
     src/sse_parser.cpp
     src/tool_call_assembler.cpp
+    src/write_file.cpp
 )
 
 # Main executable
