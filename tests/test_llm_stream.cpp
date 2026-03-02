@@ -14,17 +14,17 @@ TEST(LlmStreamTest, NormalStreamingMultipleChunks) {
 
     // First Payload Chunk
     std::string chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"he\"}}]}\n\n";
-    EXPECT_TRUE(llm_stream_process_chunk(chunk1, parser, callback, &err));
+    EXPECT_TRUE(llm_stream_process_chunk(chunk1, parser, callback, nullptr, &err));
     EXPECT_EQ(accumulated, "he");
 
     // Second Payload Chunk
     std::string chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\"llo\"}}]}\n\n";
-    EXPECT_TRUE(llm_stream_process_chunk(chunk2, parser, callback, &err));
+    EXPECT_TRUE(llm_stream_process_chunk(chunk2, parser, callback, nullptr, &err));
     EXPECT_EQ(accumulated, "hello");
 
     // Finished flag Chunk
     std::string chunk3 = "data: [DONE]\n\n";
-    EXPECT_TRUE(llm_stream_process_chunk(chunk3, parser, callback, &err));
+    EXPECT_TRUE(llm_stream_process_chunk(chunk3, parser, callback, nullptr, &err));
 }
 
 TEST(LlmStreamTest, ParseErrorPayload) {
@@ -34,7 +34,7 @@ TEST(LlmStreamTest, ParseErrorPayload) {
 
     // API Error Payload
     std::string chunk = "data: {\"error\":{\"message\":\"API error limit\"}}\n\n";
-    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, &err));
+    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, nullptr, &err));
     EXPECT_EQ(err, "API Error: API error limit");
 }
 
@@ -45,7 +45,7 @@ TEST(LlmStreamTest, ParseJsonThrowError) {
 
     // Bad Formatted JSON
     std::string chunk = "data: {invalid json}\n\n";
-    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, &err));
+    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, nullptr, &err));
     EXPECT_NE(err.find("Stream JSON Error"), std::string::npos);
 }
 
@@ -60,7 +60,7 @@ TEST(LlmStreamTest, IgnoreControlChunks) {
 
     // Control chunk: Only tells role without content
     std::string chunk = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n";
-    EXPECT_TRUE(llm_stream_process_chunk(chunk, parser, callback, &err));
+    EXPECT_TRUE(llm_stream_process_chunk(chunk, parser, callback, nullptr, &err));
     EXPECT_EQ(accumulated, ""); // Ignored successfully
 }
 
@@ -73,5 +73,5 @@ TEST(LlmStreamTest, AbortFromUserCallback) {
     };
 
     std::string chunk = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
-    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, &err));
+    EXPECT_FALSE(llm_stream_process_chunk(chunk, parser, callback, nullptr, &err));
 }

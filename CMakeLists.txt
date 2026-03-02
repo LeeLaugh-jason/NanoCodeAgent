@@ -49,6 +49,7 @@ set(SOURCES
     src/http.cpp
     src/llm.cpp
     src/sse_parser.cpp
+    src/tool_call_assembler.cpp
 )
 
 # Main executable

@@ -106,17 +106,20 @@ bool llm_chat_completion(const AgentConfig& cfg, const std::string& prompt, std:
 }
 
 #include "sse_parser.hpp"
+#include "tool_call_assembler.hpp"
+#include "logger.hpp"
 
-// 新增 Chunk 流式处理解析器
-bool llm_stream_process_chunk(const std::string& chunk, SseParser& parser, const std::function<bool(const std::string&)>& on_content_delta, std::string* err) {
+bool llm_stream_process_chunk(const std::string& chunk, SseParser& parser, const std::function<bool(const std::string&)>& on_content_delta, ToolCallAssembler* tool_asm, std::string* err) {
     auto events = parser.feed(chunk);
     for (const auto& ev : events) {
         if (ev == "[DONE]") {
-            break; // 结束事件循环，随后继续返回 true
+            break;
         }
-        
+
         try {
             nlohmann::json j = nlohmann::json::parse(ev);
+
+            // Top-level error from API
             if (j.contains("error")) {
                 if (err) {
                     *err = "API Error: ";
@@ -126,19 +129,29 @@ bool llm_stream_process_chunk(const std::string& chunk, SseParser& parser, const
                         *err += j["error"].dump();
                     }
                 }
-                return false; // 中止流
+                return false;
             }
-            
+
             if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
-                auto& choice = j["choices"][0];
-                if (choice.contains("delta") && choice["delta"].contains("content") && choice["delta"]["content"].is_string()) {
-                    std::string content = choice["delta"]["content"].get<std::string>();
+                const auto& delta = j["choices"][0].value("delta", nlohmann::json::object());
+
+                // content delta -> text streaming callback
+                if (delta.contains("content") && delta["content"].is_string()) {
+                    std::string content = delta["content"].get<std::string>();
                     if (!on_content_delta(content)) {
-                        return false; // 因用户操作中止流
+                        return false;
+                    }
+                }
+
+                // tool_calls delta -> assemble
+                if (tool_asm && delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
+                    for (const auto& tc_delta : delta["tool_calls"]) {
+                        if (!tool_asm->ingest_delta(tc_delta, err)) {
+                            return false;
+                        }
                     }
                 }
             }
-            // 弹性设计：包含 choices 但没有 content 或 delta 视作普通的 control chunk 继续循环
         } catch (const nlohmann::json::exception& e) {
             if (err) {
                 *err = "Stream JSON Error: " + std::string(e.what()) + "\nRaw event: " + ev;
@@ -146,7 +159,7 @@ bool llm_stream_process_chunk(const std::string& chunk, SseParser& parser, const
             return false;
         }
     }
-    return true; 
+    return true;
 }
 
 // 主干调用实现
@@ -181,11 +194,12 @@ bool llm_chat_completion_stream(const AgentConfig& cfg, const std::string& promp
 
     HttpOptions opts;
     SseParser parser;
+    ToolCallAssembler tool_asm;
     bool stream_ok = true;
 
-    bool http_success = http_post_json_stream(url, headers, final_body, opts, 
+    bool http_success = http_post_json_stream(url, headers, final_body, opts,
         [&](const std::string& chunk) -> bool {
-            bool chunk_res = llm_stream_process_chunk(chunk, parser, on_content_delta, err);
+            bool chunk_res = llm_stream_process_chunk(chunk, parser, on_content_delta, &tool_asm, err);
             if (!chunk_res) {
                 stream_ok = false;
             }
@@ -194,6 +208,21 @@ bool llm_chat_completion_stream(const AgentConfig& cfg, const std::string& promp
 
     if (!stream_ok) {
         return false;
+    }
+
+    // Finalize tool calls (if any were accumulated)
+    std::vector<ToolCall> tool_calls;
+    std::string tc_err;
+    if (!tool_asm.finalize(&tool_calls, &tc_err)) {
+        LOG_ERROR("ToolCall finalize error: {}", tc_err);
+        // Non-fatal for content-only responses; only fail if tool_calls were started
+        if (!tool_calls.empty() || !tc_err.empty()) {
+            if (err) *err = tc_err;
+            return false;
+        }
+    }
+    for (const auto& tc : tool_calls) {
+        LOG_DEBUG("tool_call[{}] id={} name={} args={}", tc.index, tc.id, tc.name, tc.raw_arguments);
     }
 
     return http_success;
