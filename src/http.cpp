@@ -111,3 +111,93 @@ bool http_post_json(const std::string& url,
 
     return true;
 }
+
+size_t http_stream_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    size_t realsize = size * nmemb;
+    HttpStreamContext* ctx = static_cast<HttpStreamContext*>(userdata);
+
+    if (ctx->stream_size_bytes + realsize > ctx->options->max_stream_bytes) {
+        ctx->limit_exceeded = true;
+        return 0; // Abort transfer
+    }
+
+    ctx->stream_size_bytes += realsize;
+
+    std::string chunk(ptr, realsize);
+    if (ctx->on_chunk && !ctx->on_chunk(chunk)) {
+        ctx->aborted_by_user = true;
+        return 0; // Abort transfer
+    }
+
+    return realsize;
+}
+
+bool http_post_json_stream(const std::string& url, 
+                           const std::vector<std::string>& custom_headers, 
+                           const std::string& json_body, 
+                           const HttpOptions& options,
+                           std::function<bool(const std::string&)> on_chunk,
+                           std::string* err)
+{
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        if (err) *err = "Failed to initialize CURL";
+        return false;
+    }
+
+    HttpStreamContext ctx;
+    ctx.options = &options;
+    ctx.on_chunk = on_chunk;
+    ctx.stream_size_bytes = 0;
+    ctx.aborted_by_user = false;
+    ctx.limit_exceeded = false;
+
+    curl_slist* chunk_headers = nullptr;
+    for (const auto& h : custom_headers) {
+        chunk_headers = curl_slist_append(chunk_headers, h.c_str());
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk_headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(json_body.length()));
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, http_stream_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, options.timeout_ms);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, options.connect_timeout_ms);
+    
+    // low speed limits
+    if (options.idle_timeout_ms > 0) {
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, options.idle_timeout_ms / 1000);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    
+    // We can also extract status code if needed, but stream is real-time.
+    // For simplicity, we just rely on the res.
+    
+    curl_slist_free_all(chunk_headers);
+    curl_easy_cleanup(curl);
+
+    if (ctx.limit_exceeded) {
+        if (err) *err = "Stream exceeded max_stream_bytes limit";
+        return false;
+    }
+
+    if (ctx.aborted_by_user) {
+        if (err) *err = "Stream aborted by user";
+        return false;
+    }
+
+    if (res != CURLE_OK) {
+        if (err) *err = std::string("CURL streaming error: ") + curl_easy_strerror(res);
+        return false;
+    }
+
+    return true;
+}

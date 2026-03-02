@@ -41,15 +41,18 @@ int main(int argc, char* argv[]) {
     // 6. Execution: HTTP to LLM
     LOG_INFO("Sending prompt to LLM: {}", config.prompt);
     
-    std::string response_text;
     std::string llm_err;
-    if (!llm_chat_completion(config, config.prompt, &response_text, &llm_err)) {
+    LOG_INFO("=== LLM Response ===");
+    if (!llm_chat_completion_stream(config, config.prompt, [](const std::string& content) {
+        std::cout << content;
+        std::cout.flush();
+        return true;
+    }, &llm_err)) {
         LOG_ERROR("LLM Request Failed: {}", llm_err);
         return 1;
     }
 
-    LOG_INFO("=== LLM Response ===");
-    std::cout << response_text << "\n";
+    std::cout << "\n";
     LOG_INFO("====================");
 
     return 0;

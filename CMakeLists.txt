@@ -48,6 +48,7 @@ set(SOURCES
     src/logger.cpp
     src/http.cpp
     src/llm.cpp
+    src/sse_parser.cpp
 )
 
 # Main executable

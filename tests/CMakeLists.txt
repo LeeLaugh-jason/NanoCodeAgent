@@ -5,6 +5,7 @@ set(TEST_SOURCES
     ../src/workspace.cpp
     ../src/http.cpp
     ../src/llm.cpp
+    ../src/sse_parser.cpp
 )
 
 # CLI Test
@@ -37,5 +38,20 @@ add_executable(test_http_limits test_http_limits.cpp ${TEST_SOURCES})
 target_link_libraries(test_http_limits PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_http_limits PRIVATE ../include)
 
+add_executable(test_sse_parser test_sse_parser.cpp ${TEST_SOURCES})
+target_link_libraries(test_sse_parser PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_sse_parser PRIVATE ../include)
+
+add_executable(test_stream_limits test_stream_limits.cpp ${TEST_SOURCES})
+target_link_libraries(test_stream_limits PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_stream_limits PRIVATE ../include)
+
+add_executable(test_llm_stream test_llm_stream.cpp ${TEST_SOURCES})
+target_link_libraries(test_llm_stream PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_llm_stream PRIVATE ../include)
+
 gtest_discover_tests(test_llm_parse)
 gtest_discover_tests(test_http_limits)
+gtest_discover_tests(test_sse_parser)
+gtest_discover_tests(test_stream_limits)
+gtest_discover_tests(test_llm_stream)

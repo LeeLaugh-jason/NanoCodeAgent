@@ -2,6 +2,9 @@
     "github.copilot.chat.codeGeneration.instructions": [
         {
             "file": ".agent/skills/cpp_engineering_rules.md"
+        },
+        {
+            "file": ".agent/skills/git_commit_rules.md"
         }
     ]
 }
