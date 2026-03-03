@@ -9,6 +9,7 @@ set(TEST_SOURCES
     ../src/tool_call_assembler.cpp
     ../src/write_file.cpp
     ../src/read_file.cpp
+    ../src/bash_tool.cpp
 )
 
 # CLI Test
@@ -65,6 +66,10 @@ add_executable(test_read_file test_read_file.cpp ${TEST_SOURCES})
 target_link_libraries(test_read_file PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_read_file PRIVATE ../include)
 
+add_executable(test_bash_tool test_bash_tool.cpp ${TEST_SOURCES})
+target_link_libraries(test_bash_tool PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_bash_tool PRIVATE ../include)
+
 gtest_discover_tests(test_llm_parse)
 gtest_discover_tests(test_http_limits)
 gtest_discover_tests(test_sse_parser)
@@ -73,3 +78,4 @@ gtest_discover_tests(test_llm_stream)
 gtest_discover_tests(test_toolcall_assembler)
 gtest_discover_tests(test_write_file)
 gtest_discover_tests(test_read_file)
+gtest_discover_tests(test_bash_tool)

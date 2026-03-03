@@ -52,6 +52,7 @@ set(SOURCES
     src/tool_call_assembler.cpp
     src/write_file.cpp
     src/read_file.cpp
+    src/bash_tool.cpp
 )
 
 # Main executable
