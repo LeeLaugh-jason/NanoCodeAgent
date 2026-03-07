@@ -7,9 +7,11 @@ set(TEST_SOURCES
     ../src/llm.cpp
     ../src/sse_parser.cpp
     ../src/tool_call_assembler.cpp
+    ../src/tool_registry.cpp
     ../src/write_file.cpp
     ../src/read_file.cpp
     ../src/bash_tool.cpp
+    ../src/repo_tools.cpp
     ../src/agent_utils.cpp
     ../src/agent_tools.cpp
     ../src/agent_loop.cpp
@@ -102,6 +104,16 @@ add_executable(test_schema_and_args_tolerance test_schema_and_args_tolerance.cpp
 target_link_libraries(test_schema_and_args_tolerance PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_schema_and_args_tolerance PRIVATE ../include)
 gtest_discover_tests(test_schema_and_args_tolerance)
+
+add_executable(test_tool_registry test_tool_registry.cpp ${TEST_SOURCES})
+target_link_libraries(test_tool_registry PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_tool_registry PRIVATE ../include)
+gtest_discover_tests(test_tool_registry)
+
+add_executable(test_repo_tools test_repo_tools.cpp ${TEST_SOURCES})
+target_link_libraries(test_repo_tools PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_repo_tools PRIVATE ../include)
+gtest_discover_tests(test_repo_tools)
 
 add_executable(test_net_smoke test_net_smoke.cpp ${TEST_SOURCES})
 target_link_libraries(test_net_smoke PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)

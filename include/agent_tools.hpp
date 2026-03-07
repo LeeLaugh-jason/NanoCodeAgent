@@ -1,7 +1,9 @@
 #pragma once
 
+#include "tool_registry.hpp"
 #include "tool_call.hpp"
 #include "config.hpp"
+
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -11,6 +13,9 @@ std::string execute_tool(const ToolCall& cmd, const AgentConfig& config);
 
 // Returns the JSON schema representing the tools the agent is capable of running
 nlohmann::json get_agent_tools_schema();
+
+// Returns the default built-in tool registry used by the agent runtime.
+const ToolRegistry& get_default_tool_registry();
 
 // A simple utility to get a generic JSON error
 std::string format_tool_error(const std::string& error_msg);

@@ -59,9 +59,11 @@ Completed runtime baseline:
 Goal: complete a stronger coding workflow loop inside a repository.
 
 - [ ] add `apply_patch` as a first-class mutation primitive
-- [ ] add read-only git inspection tools such as `git_status`, `git_diff`, and `git_show`
-- [ ] add repository search tools such as `rg_search` and bounded file listing
-- [ ] define mutation vs read-only tool policy and approval boundaries
+- [x] add `git_status` with structured branch, ahead/behind, and per-file change listing
+- [ ] add `git_diff` and `git_show` for read-only diff and commit history inspection
+- [x] add `rg_search` and bounded `list_files_bounded` for repository search
+- [x] introduce `ToolRegistry` typed dispatch with `ToolCategory` and `requires_approval` metadata
+- [ ] enforce mutation vs read-only tool policy and approval gate at runtime
 - [ ] add patch validation and rejection flow before writeback
 - [ ] support bounded build/test execution loops for CMake and `ctest`
 - [ ] improve failure recovery and retry guidance from tool results
