@@ -14,6 +14,7 @@ set(TEST_SOURCES
     ../src/repo_tools.cpp
     ../src/agent_utils.cpp
     ../src/agent_tools.cpp
+    ../src/apply_patch.cpp
     ../src/agent_loop.cpp
 )
 
@@ -114,6 +115,11 @@ add_executable(test_repo_tools test_repo_tools.cpp ${TEST_SOURCES})
 target_link_libraries(test_repo_tools PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
 target_include_directories(test_repo_tools PRIVATE ../include)
 gtest_discover_tests(test_repo_tools)
+
+add_executable(test_apply_patch test_apply_patch.cpp ${TEST_SOURCES})
+target_link_libraries(test_apply_patch PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)
+target_include_directories(test_apply_patch PRIVATE ../include)
+gtest_discover_tests(test_apply_patch)
 
 add_executable(test_net_smoke test_net_smoke.cpp ${TEST_SOURCES})
 target_link_libraries(test_net_smoke PRIVATE GTest::gtest_main spdlog::spdlog CURL::libcurl nlohmann_json::nlohmann_json)

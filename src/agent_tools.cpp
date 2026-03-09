@@ -1,59 +1,12 @@
 #include "agent_tools.hpp"
-#include <cmath>
-#include <limits>
-
-namespace {
-
-bool parse_timeout_ms_arg(const nlohmann::json& value, int& timeout_ms) {
-    long long parsed = 0;
-
-    if (value.is_number_integer()) {
-        parsed = value.get<long long>();
-    } else if (value.is_number_unsigned()) {
-        auto parsed_u = value.get<unsigned long long>();
-        if (parsed_u > static_cast<unsigned long long>(std::numeric_limits<long long>::max())) {
-            return false;
-        }
-        parsed = static_cast<long long>(parsed_u);
-    } else if (value.is_number_float()) {
-        double as_double = value.get<double>();
-        if (!std::isfinite(as_double) || std::floor(as_double) != as_double) {
-            return false;
-        }
-        if (as_double < static_cast<double>(std::numeric_limits<long long>::min()) ||
-            as_double > static_cast<double>(std::numeric_limits<long long>::max())) {
-            return false;
-        }
-        parsed = static_cast<long long>(as_double);
-    } else if (value.is_string()) {
-        const auto s = value.get<std::string>();
-        std::size_t idx = 0;
-        try {
-            parsed = std::stoll(s, &idx, 10);
-        } catch (...) {
-            return false;
-        }
-        if (idx != s.size()) {
-            return false;
-        }
-    } else {
-        return false;
-    }
-
-    if (parsed <= 0 || parsed > std::numeric_limits<int>::max()) {
-        return false;
-    }
-
-    timeout_ms = static_cast<int>(parsed);
-    return true;
-}
-
-}
-
-                if (!parse_timeout_ms_arg(t, timeout)) {
-                    return format_tool_error("Invalid 'timeout_ms' argument for bash_execute_safe. Expected integer in range [1, INT_MAX].");
+#include "apply_patch.hpp"
+#include "bash_tool.hpp"
+#include "read_file.hpp"
+#include "repo_tools.hpp"
 #include "write_file.hpp"
 
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -325,6 +278,205 @@ ToolRegistry build_default_tool_registry() {
         .max_output_bytes = kMaxRepoOutputBytes,
         .execute = [](const ToolCall&, const AgentConfig& config, size_t output_limit) {
             return git_status(config.workspace_abs, 0, output_limit);
+        }
+    });
+
+    register_or_throw(&registry, ToolDescriptor{
+        .name = "apply_patch",
+        .description = "Applies an exact-text replacement patch to a workspace file. "
+                       "Supports single mode (old_text + new_text) and batch mode (patches array). "
+                       "old_text must appear exactly once in the file. "
+                       "An explicit empty new_text is valid and deletes the matched text.",
+        .category = ToolCategory::Mutating,
+        .requires_approval = true,
+        .json_schema = nlohmann::json{
+            {"type", "object"},
+            {"properties", {
+                {"path", {
+                    {"type", "string"},
+                    {"description", "Relative path to the file to patch."}
+                }},
+                {"old_text", {
+                    {"type", "string"},
+                    {"description", "(Single mode) The exact text to search for. Must occur exactly once."}
+                }},
+                {"new_text", {
+                    {"type", "string"},
+                    {"description", "(Single mode) The replacement text. Pass an explicit empty string to delete."}
+                }},
+                {"patches", {
+                    {"type", "array"},
+                    {"description", "(Batch mode) Array of {old_text, new_text} patch entries applied in order."},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"old_text", {{"type", "string"}}},
+                            {"new_text", {{"type", "string"}}}
+                        }},
+                        {"required", nlohmann::json::array({"old_text", "new_text"})}
+                    }}
+                }}
+            }},
+            {"oneOf", nlohmann::json::array({
+                nlohmann::json{
+                    {"properties", {
+                        {"path", nlohmann::json::object()},
+                        {"old_text", nlohmann::json::object()},
+                        {"new_text", nlohmann::json::object()}
+                    }},
+                    {"required", nlohmann::json::array({"path", "old_text", "new_text"})},
+                    {"additionalProperties", false}
+                },
+                nlohmann::json{
+                    {"properties", {
+                        {"path", nlohmann::json::object()},
+                        {"patches", nlohmann::json::object()}
+                    }},
+                    {"required", nlohmann::json::array({"path", "patches"})},
+                    {"additionalProperties", false}
+                }
+            })}
+        },
+        .max_output_bytes = 8192,
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t) -> nlohmann::json {
+            if (!cmd.arguments.contains("path")) {
+                return nlohmann::json{{"ok", false}, {"error", "Missing 'path' argument for apply_patch."}};
+            }
+            if (!cmd.arguments.at("path").is_string()) {
+                return nlohmann::json{{"ok", false}, {"error", "Invalid type for 'path': expected string."}};
+            }
+            const std::string path = cmd.arguments.at("path").get<std::string>();
+
+            // Reject unknown top-level keys to match the schema's
+            // additionalProperties: false contract in each oneOf branch.
+            static const std::array<std::string, 4> kAllowedKeys{"path", "old_text", "new_text", "patches"};
+            for (const auto& [key, _] : cmd.arguments.items()) {
+                if (std::find(kAllowedKeys.begin(), kAllowedKeys.end(), key) == kAllowedKeys.end()) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "Unknown argument '" + key + "' for apply_patch. "
+                                  "Allowed top-level fields: path, old_text, new_text, patches."}
+                    };
+                }
+            }
+
+            const bool has_patches  = cmd.arguments.contains("patches");
+            const bool has_old_text = cmd.arguments.contains("old_text");
+            const bool has_new_text = cmd.arguments.contains("new_text");
+
+            // Reject mixed mode: patches array combined with single-mode fields
+            if (has_patches && (has_old_text || has_new_text)) {
+                return nlohmann::json{
+                    {"ok", false},
+                    {"error", "Ambiguous input: 'patches' cannot be combined with 'old_text' or "
+                              "'new_text'. Use single mode (old_text + new_text) or batch mode "
+                              "(patches array), not both."}
+                };
+            }
+
+            if (has_patches) {
+                // Batch mode
+                const auto& patches_val = cmd.arguments.at("patches");
+                if (!patches_val.is_array()) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "'patches' must be an array of {old_text, new_text} objects, "
+                                  "not a " + std::string(patches_val.type_name()) + "."}
+                    };
+                }
+                if (patches_val.empty()) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "'patches' array must not be empty."}
+                    };
+                }
+
+                std::vector<PatchEntry> patches;
+                patches.reserve(patches_val.size());
+                for (size_t i = 0; i < patches_val.size(); ++i) {
+                    const auto& entry = patches_val[i];
+                    if (!entry.is_object()) {
+                        return nlohmann::json{
+                            {"ok", false},
+                            {"error", "patches[" + std::to_string(i) + "]: expected object, got "
+                                      + std::string(entry.type_name()) + "."}
+                        };
+                    }
+                    if (!entry.contains("old_text")) {
+                        return nlohmann::json{
+                            {"ok", false},
+                            {"error", "patches[" + std::to_string(i) + "]: missing required field 'old_text'."}
+                        };
+                    }
+                    if (!entry["old_text"].is_string()) {
+                        return nlohmann::json{
+                            {"ok", false},
+                            {"error", "patches[" + std::to_string(i) + "]: field 'old_text' must be a string."}
+                        };
+                    }
+                    if (!entry.contains("new_text")) {
+                        return nlohmann::json{
+                            {"ok", false},
+                            {"error", "patches[" + std::to_string(i) + "]: missing required field 'new_text'. "
+                                      "To delete text pass an explicit empty string."}
+                        };
+                    }
+                    if (!entry["new_text"].is_string()) {
+                        return nlohmann::json{
+                            {"ok", false},
+                            {"error", "patches[" + std::to_string(i) + "]: field 'new_text' must be a string. "
+                                      "To delete text pass an explicit empty string."}
+                        };
+                    }
+                    patches.push_back({
+                        entry["old_text"].get<std::string>(),
+                        entry["new_text"].get<std::string>()
+                    });
+                }
+
+                const auto result = apply_patch_batch(config.workspace_abs, path, patches);
+                return nlohmann::json{
+                    {"ok", result.ok},
+                    {"match_count", result.match_count},
+                    {"error", result.err}
+                };
+            } else {
+                // Single mode: both old_text and new_text must be explicitly present
+                if (!has_old_text) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "Missing 'old_text' argument for apply_patch."}
+                    };
+                }
+                if (!has_new_text) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "Missing 'new_text' argument for apply_patch. "
+                                  "To delete text pass an explicit empty string."}
+                    };
+                }
+                if (!cmd.arguments.at("old_text").is_string()) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "Argument 'old_text' must be a string."}
+                    };
+                }
+                if (!cmd.arguments.at("new_text").is_string()) {
+                    return nlohmann::json{
+                        {"ok", false},
+                        {"error", "Argument 'new_text' must be a string."}
+                    };
+                }
+                const std::string old_text = cmd.arguments.at("old_text").get<std::string>();
+                const std::string new_text = cmd.arguments.at("new_text").get<std::string>();
+
+                const auto result = apply_patch_single(config.workspace_abs, path, old_text, new_text);
+                return nlohmann::json{
+                    {"ok", result.ok},
+                    {"match_count", result.match_count},
+                    {"error", result.err}
+                };
+            }
         }
     });
 

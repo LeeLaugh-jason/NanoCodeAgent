@@ -58,7 +58,7 @@ Completed runtime baseline:
 
 Goal: complete a stronger coding workflow loop inside a repository.
 
-- [ ] add `apply_patch` as a first-class mutation primitive
+- [x] add `apply_patch` as a first-class mutation primitive
 - [x] add `git_status` with structured branch, ahead/behind, and per-file change listing
 - [ ] add `git_diff` and `git_show` for read-only diff and commit history inspection
 - [x] add `rg_search` and bounded `list_files_bounded` for repository search
