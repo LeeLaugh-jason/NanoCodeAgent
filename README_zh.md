@@ -58,7 +58,7 @@ git submodule update --init --recursive
 
 目标：补齐一个更完整的仓库内 coding workflow 闭环。
 
-- [ ] 把 `apply_patch` 做成一等变更原语
+- [x] 把 `apply_patch` 做成一等变更原语
 - [x] 增加 `git_status`，返回结构化的分支、ahead/behind 与逐文件变更状态
 - [ ] 增加 `git_diff` 和 `git_show` 用于只读 diff 与历史查看
 - [x] 增加仓库搜索工具 `rg_search` 与受限目录枚举 `list_files_bounded`

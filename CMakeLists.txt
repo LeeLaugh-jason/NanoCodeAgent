@@ -57,6 +57,7 @@ set(SOURCES
     src/repo_tools.cpp
     src/agent_utils.cpp
     src/agent_tools.cpp
+    src/apply_patch.cpp
     src/agent_loop.cpp
 )
 
