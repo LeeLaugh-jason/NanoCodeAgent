@@ -93,6 +93,8 @@ protected:
 TEST_F(AgentMockE2ETest, MockFullChain) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
+    config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
     config.max_turns = 10;
     config.max_tool_calls_per_turn = 5;
     config.max_total_tool_calls = 50;

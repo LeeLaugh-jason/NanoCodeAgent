@@ -17,6 +17,8 @@ void print_help() {
               << "  --mock-fixture <path>    Path to mock fixture file when in mock mode (Env: NCA_MOCK_FIXTURE)\n"
               << "  --system-prompt-file <path> Custom system prompt file (Env: NCA_SYSTEM_PROMPT_FILE)\n"
               << "  --dry-run                Print what would be sent without making network requests (Env: NCA_DRY_RUN)\n"
+              << "  --allow-mutating-tools   Allow approval-required mutating tools (Env: NCA_ALLOW_MUTATING_TOOLS)\n"
+              << "  --allow-execution-tools  Allow approval-required execution tools (Env: NCA_ALLOW_EXECUTION_TOOLS)\n"
               << "  --max-turns <n>          Maximum conversation turns (Default: 20)\n"
               << "  --max-tool-calls-per-turn <n> Max tools per turn (Default: 8)\n"
               << "  --max-total-tool-calls <n> Max total tool calls (Default: 50)\n"
@@ -54,6 +56,8 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
         {"mock-fixture", required_argument, nullptr, 3001},
         {"system-prompt-file", required_argument, nullptr, 3002},
         {"dry-run", no_argument, nullptr, 3003},
+        {"allow-mutating-tools", no_argument, nullptr, 3004},
+        {"allow-execution-tools", no_argument, nullptr, 3005},
         {nullptr, no_argument, nullptr, 0}
     };
 
@@ -116,6 +120,12 @@ CliResult cli_parse(int argc, char* argv[], AgentConfig& config) {
                 break;
             case 3003:
                 config.dry_run = true;
+                break;
+            case 3004:
+                config.allow_mutating_tools = true;
+                break;
+            case 3005:
+                config.allow_execution_tools = true;
                 break;
             case '?':
             default:

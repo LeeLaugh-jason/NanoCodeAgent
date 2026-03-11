@@ -63,7 +63,7 @@ Goal: complete a stronger coding workflow loop inside a repository.
 - [x] add `git_diff` and `git_show` for read-only diff and commit history inspection
 - [x] add `rg_search` and bounded `list_files_bounded` for repository search
 - [x] introduce `ToolRegistry` typed dispatch with `ToolCategory` and `requires_approval` metadata
-- [ ] enforce mutation vs read-only tool policy and approval gate at runtime
+- [x] enforce mutation vs read-only tool policy and approval gate at runtime
 - [ ] add patch validation and rejection flow before writeback
 - [ ] support bounded build/test execution loops for CMake and `ctest`
 - [ ] improve failure recovery and retry guidance from tool results

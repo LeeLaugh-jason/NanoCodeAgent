@@ -59,3 +59,18 @@ TEST_F(CliTest, ParseAllOptions) {
     EXPECT_EQ(config.base_url, "https://api.anthropic.com");
     EXPECT_TRUE(config.debug_mode);
 }
+
+TEST_F(CliTest, ParseApprovalFlags) {
+    AgentConfig config;
+    const char* argv[] = {
+        "agent",
+        "-e", "approval task",
+        "--allow-mutating-tools",
+        "--allow-execution-tools"
+    };
+    int argc = sizeof(argv) / sizeof(argv[0]);
+
+    EXPECT_EQ(cli_parse(argc, const_cast<char**>(argv), config), CliResult::Success);
+    EXPECT_TRUE(config.allow_mutating_tools);
+    EXPECT_TRUE(config.allow_execution_tools);
+}

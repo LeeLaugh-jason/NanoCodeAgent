@@ -63,7 +63,7 @@ git submodule update --init --recursive
 - [x] 增加 `git_diff` 和 `git_show` 用于只读 diff 与历史查看
 - [x] 增加仓库搜索工具 `rg_search` 与受限目录枚举 `list_files_bounded`
 - [x] 引入 `ToolRegistry` 类型化分发，附带 `ToolCategory` 与 `requires_approval` 元数据
-- [ ] 在运行时真正落地只读工具与修改型工具的权限/确认边界
+- [x] 在运行时真正落地只读工具与修改型工具的权限/确认边界
 - [ ] 增加 patch 校验与拒绝回退流程
 - [ ] 支持围绕 CMake 与 `ctest` 的受限 build/test 循环
 - [ ] 强化失败恢复与基于 tool result 的重试提示
