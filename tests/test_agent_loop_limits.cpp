@@ -22,6 +22,7 @@ protected:
 TEST_F(AgentLoopLimitsTest, MaxTurnsHalt) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
+    config.allow_execution_tools = true;
     config.max_turns = 3;
     config.max_tool_calls_per_turn = 5;
     config.max_total_tool_calls = 50;
@@ -55,6 +56,7 @@ TEST_F(AgentLoopLimitsTest, MaxTurnsHalt) {
 TEST_F(AgentLoopLimitsTest, MaxToolCallsPerTurn) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
+    config.allow_execution_tools = true;
     config.max_turns = 10;
     config.max_tool_calls_per_turn = 2; // Limit 2
     config.max_total_tool_calls = 50;
@@ -82,6 +84,7 @@ TEST_F(AgentLoopLimitsTest, MaxToolCallsPerTurn) {
 TEST_F(AgentLoopLimitsTest, MaxTotalToolCalls) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
+    config.allow_execution_tools = true;
     config.max_turns = 10;
     config.max_tool_calls_per_turn = 5;
     config.max_total_tool_calls = 7;
@@ -164,6 +167,7 @@ TEST_F(AgentLoopLimitsTest, FailFastOnToolError) {
 TEST_F(AgentLoopLimitsTest, CombinedTruncationAndContextLimit) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
+    config.allow_execution_tools = true;
     config.max_turns = 2; // Need a second turn to test context clipping
     config.max_tool_output_bytes = 50; // Severely truncate individual tools
     config.max_context_bytes = 900;    // Tightly clamp total context

@@ -25,6 +25,8 @@ struct AgentConfig {
     int max_total_tool_calls = 50;
     size_t max_tool_output_bytes = 16384; // 16KB
     size_t max_context_bytes = 204800;    // 200KB
+    bool allow_mutating_tools = false;
+    bool allow_execution_tools = false;
 };
 
 // Initialize configuration considering Defaults < Config File < ENV

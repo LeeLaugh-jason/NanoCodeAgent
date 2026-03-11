@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <algorithm>
@@ -13,6 +14,11 @@ static std::string to_lower(const std::string& s) {
     std::string res = s;
     std::transform(res.begin(), res.end(), res.begin(), [](unsigned char c){ return std::tolower(c); });
     return res;
+}
+
+static bool parse_bool_like(const std::string& value) {
+    const std::string lowered = to_lower(value);
+    return lowered == "true" || lowered == "1";
 }
 
 static void config_load_from_file(AgentConfig& config, const std::string& filepath) {
@@ -41,7 +47,7 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "api_key") config.api_key = val;
         else if (key == "base_url") config.base_url = val;
         else if (key == "workspace") config.workspace = val;
-        else if (key == "debug") config.debug_mode = (val == "true" || val == "1");
+        else if (key == "debug") config.debug_mode = parse_bool_like(val);
         else if (key == "max_turns") config.max_turns = std::stoi(val);
         else if (key == "max_tool_calls_per_turn") config.max_tool_calls_per_turn = std::stoi(val);
         else if (key == "max_total_tool_calls") config.max_total_tool_calls = std::stoi(val);
@@ -50,7 +56,9 @@ static void config_load_from_file(AgentConfig& config, const std::string& filepa
         else if (key == "mode") config.mode = val;
         else if (key == "mock_fixture") config.mock_fixture = val;
         else if (key == "system_prompt_file") config.system_prompt_file = val;
-        else if (key == "dry_run") config.dry_run = (val == "true" || val == "1");
+        else if (key == "dry_run") config.dry_run = parse_bool_like(val);
+        else if (key == "allow_mutating_tools") config.allow_mutating_tools = parse_bool_like(val);
+        else if (key == "allow_execution_tools") config.allow_execution_tools = parse_bool_like(val);
     }
 }
 
@@ -59,7 +67,7 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_API_KEY")) config.api_key = v;
     if (const char* v = std::getenv("NCA_BASE_URL")) config.base_url = v;
     if (const char* v = std::getenv("NCA_WORKSPACE")) config.workspace = v;
-    if (const char* v = std::getenv("NCA_DEBUG")) config.debug_mode = (std::string(v) == "true" || std::string(v) == "1");
+    if (const char* v = std::getenv("NCA_DEBUG")) config.debug_mode = parse_bool_like(v);
     if (const char* v = std::getenv("NCA_MAX_TURNS")) config.max_turns = std::stoi(v);
     if (const char* v = std::getenv("NCA_MAX_TOOL_CALLS_PER_TURN")) config.max_tool_calls_per_turn = std::stoi(v);
     if (const char* v = std::getenv("NCA_MAX_TOTAL_TOOL_CALLS")) config.max_total_tool_calls = std::stoi(v);
@@ -68,7 +76,9 @@ static void config_apply_env(AgentConfig& config) {
     if (const char* v = std::getenv("NCA_MODE")) config.mode = v;
     if (const char* v = std::getenv("NCA_MOCK_FIXTURE")) config.mock_fixture = v;
     if (const char* v = std::getenv("NCA_SYSTEM_PROMPT_FILE")) config.system_prompt_file = v;
-    if (const char* v = std::getenv("NCA_DRY_RUN")) config.dry_run = (std::string(v) == "true" || std::string(v) == "1");
+    if (const char* v = std::getenv("NCA_DRY_RUN")) config.dry_run = parse_bool_like(v);
+    if (const char* v = std::getenv("NCA_ALLOW_MUTATING_TOOLS")) config.allow_mutating_tools = parse_bool_like(v);
+    if (const char* v = std::getenv("NCA_ALLOW_EXECUTION_TOOLS")) config.allow_execution_tools = parse_bool_like(v);
 }
 
 AgentConfig config_init(int argc, char* argv[]) {

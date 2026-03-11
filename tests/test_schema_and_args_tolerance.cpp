@@ -71,6 +71,7 @@ TEST(SchemaAndArgsToleranceTest, GetSchemaMatchesCurrentTools) {
 TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeInteger) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "bash_execute_safe";
@@ -87,6 +88,7 @@ TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeInteger) {
 TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeString) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "bash_execute_safe";
@@ -103,6 +105,7 @@ TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsOutOfRangeString) {
 TEST(SchemaAndArgsToleranceTest, BashTimeoutToleratesStrings) {
     AgentConfig config;
     config.workspace_abs = "."; // Allow mock safe dir
+    config.allow_execution_tools = true;
     
     ToolCall tc;
     tc.name = "bash_execute_safe";
@@ -121,6 +124,7 @@ TEST(SchemaAndArgsToleranceTest, BashTimeoutToleratesStrings) {
 TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsUnsignedOverflow) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "bash_execute_safe";
@@ -136,6 +140,7 @@ TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsUnsignedOverflow) {
 TEST(SchemaAndArgsToleranceTest, BashTimeoutRejectsStringOverflow) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "bash_execute_safe";
@@ -178,7 +183,7 @@ TEST(SchemaAndArgsToleranceTest, TypeErrorsCaughtSafelyAndDontCrash) {
     EXPECT_NE(res.find("failed"), std::string::npos);
 }
 
-TEST(SchemaAndArgsToleranceTest, ExistingToolsStillDispatchThroughRegistry) {
+TEST(SchemaAndArgsToleranceTest, ReadFileStillDispatchesThroughRegistry) {
     const auto test_workspace =
         (std::filesystem::temp_directory_path() /
          ("nano_schema_dispatch_" + std::to_string(getpid())))
@@ -189,37 +194,148 @@ TEST(SchemaAndArgsToleranceTest, ExistingToolsStillDispatchThroughRegistry) {
     AgentConfig config;
     config.workspace_abs = test_workspace;
 
-    ToolCall write_call;
-    write_call.name = "write_file_safe";
-    write_call.arguments = {
-        {"path", "hello.txt"},
-        {"content", "world"}
-    };
-
-    const std::string write_result = execute_tool(write_call, config);
-    EXPECT_NE(write_result.find("\"ok\":true"), std::string::npos);
-
     ToolCall read_call;
     read_call.name = "read_file_safe";
     read_call.arguments = {
         {"path", "hello.txt"}
     };
 
+    std::filesystem::path hello_path = std::filesystem::path(test_workspace) / "hello.txt";
+    {
+        std::ofstream out(hello_path);
+        out << "world";
+    }
+
     const std::string read_result = execute_tool(read_call, config);
     EXPECT_NE(read_result.find("\"ok\":true"), std::string::npos);
     EXPECT_NE(read_result.find("world"), std::string::npos);
 
-    ToolCall bash_call;
-    bash_call.name = "bash_execute_safe";
-    bash_call.arguments = {
-        {"command", "cat hello.txt"}
-    };
-
-    const std::string bash_result = execute_tool(bash_call, config);
-    EXPECT_NE(bash_result.find("\"ok\":true"), std::string::npos);
-    EXPECT_NE(bash_result.find("world"), std::string::npos);
-
     std::filesystem::remove_all(test_workspace);
+}
+
+TEST(SchemaAndArgsToleranceTest, BlockedWriteFileHasNoSideEffect) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_schema_block_write_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+
+    ToolCall tc;
+    tc.name = "write_file_safe";
+    tc.arguments = {{"path", "blocked.txt"}, {"content", "world"}};
+
+    const auto result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(ws) / "blocked.txt"));
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, ApprovedWriteFileStillExecutes) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_schema_allow_write_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
+
+    ToolCall tc;
+    tc.name = "write_file_safe";
+    tc.arguments = {{"path", "allowed.txt"}, {"content", "world"}};
+
+    const auto result = json::parse(execute_tool(tc, config));
+    EXPECT_TRUE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(ws) / "allowed.txt"));
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, BlockedBashHasNoSideEffect) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_schema_block_bash_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {{"command", "touch blocked-from-bash.txt"}};
+
+    const auto result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(ws) / "blocked-from-bash.txt"));
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, ApprovedBashStillExecutes) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_schema_allow_bash_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+    config.allow_execution_tools = true;
+
+    ToolCall tc;
+    tc.name = "bash_execute_safe";
+    tc.arguments = {{"command", "touch allowed-from-bash.txt"}};
+
+    const auto result = json::parse(execute_tool(tc, config));
+    EXPECT_TRUE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(ws) / "allowed-from-bash.txt"));
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, BlockedApplyPatchHasNoSideEffect) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_schema_block_patch_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    std::filesystem::path target = std::filesystem::path(ws) / "f.txt";
+    {
+        std::ofstream out(target);
+        out << "hello world";
+    }
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+
+    ToolCall tc;
+    tc.name = "apply_patch";
+    tc.arguments = {{"path", "f.txt"}, {"old_text", "world"}, {"new_text", "earth"}};
+
+    const auto result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["status"], "blocked");
+
+    std::ifstream in(target);
+    std::string content;
+    std::getline(in, content);
+    EXPECT_EQ(content, "hello world");
+
+    std::filesystem::remove_all(ws);
 }
 
 // ---------------------------------------------------------------------------
@@ -337,12 +453,15 @@ TEST(ApplyPatchSchemaTest, SchemaModeBatchAllowsOnlyPathPatches) {
 TEST(ApplyPatchSchemaTest, RuntimeRejectsPathOnly) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
     tc.arguments = {{"path", "any.txt"}};
 
     std::string res = execute_tool(tc, config);
+    EXPECT_EQ(res.find("\"status\":\"blocked\""), std::string::npos)
+        << "Runtime validation test must not pass due to approval blocking";
     EXPECT_NE(res.find("\"ok\":false"), std::string::npos)
         << "Passing only 'path' should fail at runtime";
 }
@@ -358,6 +477,7 @@ TEST(ApplyPatchSchemaTest, RuntimeAcceptsSingleMode) {
     // Seed a file via write_file_safe
     AgentConfig config;
     config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
 
     ToolCall write_tc;
     write_tc.name = "write_file_safe";
@@ -388,6 +508,7 @@ TEST(ApplyPatchSchemaTest, RuntimeAcceptsBatchMode) {
 
     AgentConfig config;
     config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
 
     ToolCall write_tc;
     write_tc.name = "write_file_safe";
@@ -413,6 +534,7 @@ TEST(ApplyPatchSchemaTest, RuntimeAcceptsBatchMode) {
 TEST(ApplyPatchSchemaTest, RuntimeRejectsMixedPatchesAndOldText) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
@@ -432,6 +554,7 @@ TEST(ApplyPatchSchemaTest, RuntimeRejectsMixedPatchesAndOldText) {
 TEST(ApplyPatchSchemaTest, RuntimeRejectsMixedPatchesAndNewText) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
@@ -450,6 +573,7 @@ TEST(ApplyPatchSchemaTest, RuntimeRejectsMixedPatchesAndNewText) {
 TEST(ApplyPatchSchemaTest, RuntimeRejectsAllThreeFieldsCombined) {
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
@@ -476,6 +600,7 @@ TEST(ApplyPatchSchemaTest, RuntimeRejectsBatchEntryMissingNewText) {
 
     AgentConfig config;
     config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
 
     ToolCall write_tc;
     write_tc.name = "write_file_safe";
@@ -506,6 +631,7 @@ TEST(ApplyPatchSchemaTest, RuntimeRejectsUnknownTopLevelFieldSingleMode) {
     // No real file needed: the unknown-field check fires before any I/O.
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
@@ -527,6 +653,7 @@ TEST(ApplyPatchSchemaTest, RuntimeRejectsUnknownTopLevelFieldBatchMode) {
     // No real file needed: the unknown-field check fires before any I/O.
     AgentConfig config;
     config.workspace_abs = ".";
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "apply_patch";
