@@ -14,6 +14,8 @@ protected:
         unsetenv("NCA_WORKSPACE");
         unsetenv("NCA_DEBUG");
         unsetenv("NCA_CONFIG");
+        unsetenv("NCA_ALLOW_MUTATING_TOOLS");
+        unsetenv("NCA_ALLOW_EXECUTION_TOOLS");
 
         // Create a fake config file
         std::ofstream out("test_conf.ini");
@@ -22,6 +24,8 @@ protected:
         out << "base_url = conf-url\n";
         out << "workspace = /conf/workspace\n";
         out << "debug = true\n";
+        out << "allow_mutating_tools = true\n";
+        out << "allow_execution_tools = false\n";
         out.close();
     }
 
@@ -39,6 +43,8 @@ TEST_F(ConfigPrecedenceTest, DefaultsOnly) {
     EXPECT_FALSE(cfg.api_key.has_value());
     EXPECT_EQ(cfg.workspace, ".");
     EXPECT_FALSE(cfg.debug_mode);
+    EXPECT_FALSE(cfg.allow_mutating_tools);
+    EXPECT_FALSE(cfg.allow_execution_tools);
 }
 
 TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
@@ -52,12 +58,16 @@ TEST_F(ConfigPrecedenceTest, ConfigFileOverridesDefaults) {
     EXPECT_EQ(cfg.base_url, "conf-url");
     EXPECT_EQ(cfg.workspace, "/conf/workspace");
     EXPECT_TRUE(cfg.debug_mode);
+    EXPECT_TRUE(cfg.allow_mutating_tools);
+    EXPECT_FALSE(cfg.allow_execution_tools);
 }
 
 TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     setenv("NCA_CONFIG", "test_conf.ini", 1);
     setenv("NCA_MODEL", "env-gpt", 1);
     setenv("NCA_API_KEY", "env-api", 1);
+    setenv("NCA_ALLOW_MUTATING_TOOLS", "0", 1);
+    setenv("NCA_ALLOW_EXECUTION_TOOLS", "1", 1);
     const char* argv[] = {"agent"};
     int argc = 1;
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
@@ -67,23 +77,28 @@ TEST_F(ConfigPrecedenceTest, EnvOverridesConfigFile) {
     EXPECT_EQ(cfg.api_key.value_or(""), "env-api");
     // Rest remain from Config
     EXPECT_EQ(cfg.base_url, "conf-url");
+    EXPECT_FALSE(cfg.allow_mutating_tools);
+    EXPECT_TRUE(cfg.allow_execution_tools);
 }
 
 TEST_F(ConfigPrecedenceTest, CliOverridesEnv) {
     setenv("NCA_CONFIG", "test_conf.ini", 1);
     setenv("NCA_MODEL", "env-gpt", 1);
-    
-    const char* argv[] = {"agent", "--model", "cli-gpt", "-e", "test"};
-    int argc = 5;
+    setenv("NCA_ALLOW_MUTATING_TOOLS", "0", 1);
+
+    const char* argv[] = {"agent", "--model", "cli-gpt", "--allow-mutating-tools", "-e", "test"};
+    int argc = 6;
     
     // Config loader handles defaults, config file, and env
     AgentConfig cfg = config_init(argc, const_cast<char**>(argv));
     
     EXPECT_EQ(cfg.model, "env-gpt"); // Before CLI parse
-    
+    EXPECT_FALSE(cfg.allow_mutating_tools);
+
     // Parse CLI options
     cli_parse(argc, const_cast<char**>(argv), cfg);
     
     EXPECT_EQ(cfg.model, "cli-gpt"); // After CLI parse
     EXPECT_EQ(cfg.api_key.value_or(""), "conf-123");
+    EXPECT_TRUE(cfg.allow_mutating_tools);
 }

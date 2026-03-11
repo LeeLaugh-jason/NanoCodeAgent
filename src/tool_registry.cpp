@@ -12,6 +12,17 @@ nlohmann::json make_registry_error(const std::string& message) {
     };
 }
 
+nlohmann::json make_approval_blocked_result(const ToolDescriptor& descriptor) {
+    return nlohmann::json{
+        {"ok", false},
+        {"status", "blocked"},
+        {"tool", descriptor.name},
+        {"category", tool_category_to_string(descriptor.category)},
+        {"requires_approval", descriptor.requires_approval},
+        {"error", "Tool execution requires approval under the current policy."}
+    };
+}
+
 size_t resolve_effective_output_limit(size_t descriptor_limit, size_t config_limit) {
     if (descriptor_limit == 0) {
         return config_limit;
@@ -20,6 +31,22 @@ size_t resolve_effective_output_limit(size_t descriptor_limit, size_t config_lim
         return descriptor_limit;
     }
     return std::min(descriptor_limit, config_limit);
+}
+
+bool tool_execution_allowed(const ToolDescriptor& descriptor, const AgentConfig& config) {
+    if (!descriptor.requires_approval) {
+        return true;
+    }
+
+    switch (descriptor.category) {
+        case ToolCategory::ReadOnly:
+            return true;
+        case ToolCategory::Mutating:
+            return config.allow_mutating_tools;
+        case ToolCategory::Execution:
+            return config.allow_execution_tools;
+    }
+    return false;
 }
 
 } // namespace
@@ -50,6 +77,10 @@ bool ToolRegistry::register_tool(ToolDescriptor descriptor, std::string* err) {
         return false;
     }
 
+    if (descriptor.category == ToolCategory::ReadOnly) {
+        descriptor.requires_approval = false;
+    }
+
     index_by_name_[descriptor.name] = descriptors_.size();
     descriptors_.push_back(std::move(descriptor));
     return true;
@@ -70,6 +101,10 @@ std::string ToolRegistry::execute(const ToolCall& call, const AgentConfig& confi
     }
 
     const size_t output_limit = resolve_effective_output_limit(descriptor->max_output_bytes, config.max_tool_output_bytes);
+
+    if (!tool_execution_allowed(*descriptor, config)) {
+        return make_approval_blocked_result(*descriptor).dump();
+    }
 
     try {
         nlohmann::json result = descriptor->execute(call, config, output_limit);

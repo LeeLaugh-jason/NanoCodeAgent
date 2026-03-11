@@ -337,6 +337,7 @@ protected:
         fs::remove_all(ws);
         fs::create_directories(ws);
         config.workspace_abs = ws;
+        config.allow_mutating_tools = true;
     }
 
     void TearDown() override { fs::remove_all(ws); }
