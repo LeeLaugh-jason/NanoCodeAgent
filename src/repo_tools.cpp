@@ -1036,6 +1036,38 @@ bool list_staged_paths(const std::string& git_binary,
     return true;
 }
 
+bool resolve_head_sha(const std::string& git_binary,
+                      const std::string& workspace_abs,
+                      std::string* head_sha,
+                      std::string* err) {
+    const std::vector<std::string> args = {git_binary, "rev-parse", "HEAD"};
+    GitTextCommandResult result = run_git_text_command(git_binary, args, workspace_abs, 0);
+    if (!result.launched) {
+        if (err) *err = result.err.empty() ? result.stderr_text : result.err;
+        return false;
+    }
+    if (result.exit_code != 0) {
+        const std::string normalized = normalize_git_repo_error(result.stderr_text);
+        std::string folded = normalized;
+        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (folded.find("unknown revision or path not in the working tree") != std::string::npos ||
+            folded.find("ambiguous argument 'head'") != std::string::npos ||
+            folded.find("needed a single revision") != std::string::npos) {
+            if (head_sha) head_sha->clear();
+            return true;
+        }
+        if (err) *err = normalized;
+        return false;
+    }
+
+    if (head_sha) {
+        *head_sha = trim_line_endings(result.stdout_text);
+    }
+    return true;
+}
+
 std::string join_relative_path(const std::string& base, const std::string& child) {
     if (base.empty()) {
         return fs::path(child).lexically_normal().generic_string();
@@ -1854,6 +1886,17 @@ nlohmann::json git_add(const std::string& workspace_abs,
         };
     }
 
+    if (command.killed_early && command.truncated) {
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", -1},
+            {"truncated", command.truncated},
+            {"error", "git add output exceeded the configured limit before the command completed."}
+        };
+    }
+
     if (command.exit_code != 0) {
         const std::string failure = normalize_git_repo_error(command.stderr_text);
         return {
@@ -1960,13 +2003,33 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         }
     }
 
-    const std::vector<std::string> args = {
+    std::string head_before;
+    std::string head_before_err;
+    if (!resolve_head_sha(git_binary, workspace_abs, &head_before, &head_before_err)) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", head_before_err.empty() ? "Failed to resolve HEAD before git commit." : head_before_err}
+        };
+    }
+
+    std::vector<std::string> args = {
         git_binary,
         "-c", "commit.gpgSign=false",
+    };
+    if (!workspace_prefix.empty()) {
+        args.push_back("-c");
+        args.push_back("core.hooksPath=/dev/null");
+    }
+    args.insert(args.end(), {
         "commit",
         "--cleanup=strip",
         "-m", message
-    };
+    });
 
     GitTextCommandResult command = run_git_text_command(git_binary, args, workspace_abs, output_limit);
     if (!command.launched) {
@@ -1984,7 +2047,33 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         };
     }
 
+    std::string head_after;
+    std::string head_after_err;
+    if (!resolve_head_sha(git_binary, workspace_abs, &head_after, &head_after_err)) {
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", command.truncated},
+            {"error", head_after_err.empty() ? "Failed to resolve HEAD after git commit." : head_after_err}
+        };
+    }
+
+    const bool head_advanced = !head_after.empty() && head_after != head_before;
     if (command.killed_early && command.truncated) {
+        if (head_advanced) {
+            return {
+                {"ok", true},
+                {"stdout", command.stdout_text},
+                {"stderr", command.stderr_text},
+                {"exit_code", 0},
+                {"commit_sha", head_after},
+                {"truncated", command.truncated},
+                {"error", ""}
+            };
+        }
         return {
             {"ok", false},
             {"stdout", command.stdout_text},
@@ -2009,20 +2098,15 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         };
     }
 
-    const std::vector<std::string> sha_args = {git_binary, "rev-parse", "HEAD"};
-    GitTextCommandResult sha_result = run_git_text_command(git_binary, sha_args, workspace_abs, 0);
-    if (!sha_result.launched || sha_result.exit_code != 0 || sha_result.stdout_text.empty()) {
-        const std::string sha_error = sha_result.err.empty()
-            ? normalize_git_repo_error(sha_result.stderr_text)
-            : sha_result.err;
+    if (!head_advanced) {
         return {
             {"ok", false},
             {"stdout", command.stdout_text},
             {"stderr", command.stderr_text},
-            {"exit_code", sha_result.exit_code},
+            {"exit_code", -1},
             {"commit_sha", ""},
             {"truncated", command.truncated},
-            {"error", sha_error.empty() ? "git commit succeeded but failed to resolve HEAD." : sha_error}
+            {"error", "git commit did not create a new HEAD commit."}
         };
     }
 
@@ -2031,7 +2115,7 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         {"stdout", command.stdout_text},
         {"stderr", command.stderr_text},
         {"exit_code", command.exit_code},
-        {"commit_sha", trim_line_endings(sha_result.stdout_text)},
+        {"commit_sha", head_after},
         {"truncated", command.truncated},
         {"error", ""}
     };

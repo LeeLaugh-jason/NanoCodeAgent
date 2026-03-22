@@ -652,6 +652,32 @@ TEST_F(RepoToolsTest, GitAddFailurePropagatesTruncatedFlag) {
     EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
 }
 
+TEST_F(RepoToolsTest, GitAddKilledEarlyByOutputLimitIsReportedAsFailure) {
+    const fs::path custom_bin = fs::path(test_workspace) / "custom-bin";
+    fs::create_directories(custom_bin);
+    const fs::path fake_git = custom_bin / "git";
+    {
+        std::ofstream out(fake_git);
+        out << "#!/bin/sh\n";
+        out << "i=0\n";
+        out << "while [ $i -lt 200000 ]; do printf 'fake-git-add-line-%06d\\n' \"$i\"; i=$((i+1)); done\n";
+        out << "exit 0\n";
+    }
+    fs::permissions(fake_git,
+                    fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write |
+                    fs::perms::group_exec | fs::perms::group_read |
+                    fs::perms::others_exec | fs::perms::others_read);
+    const char* old_path_cstr = std::getenv("PATH");
+    const std::string old_path = old_path_cstr ? old_path_cstr : "";
+    ScopedEnvVar scoped_path("PATH", custom_bin.string() + ":" + old_path);
+
+    const auto result = git_add(test_workspace, {"tracked.txt"}, 40);
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
+    EXPECT_EQ(result["error"].get<std::string>(),
+              "git add output exceeded the configured limit before the command completed.");
+}
+
 TEST_F(RepoToolsTest, GitCommitFailurePropagatesTruncatedFlag) {
     ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
                        " git config user.email t@t.com && git config user.name T &&"
@@ -685,23 +711,32 @@ TEST_F(RepoToolsTest, GitCommitKilledEarlyByOutputLimitIsReportedAsFailure) {
     create_file("tracked.txt", "changed\n");
     ASSERT_TRUE(git_add(test_workspace, {"tracked.txt"})["ok"].get<bool>());
 
-    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "commit-msg";
+    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "pre-commit";
     {
         std::ofstream out(hook);
         out << "#!/bin/sh\n";
         out << "i=0\n";
         out << "while [ $i -lt 200000 ]; do printf 'hook-output-line-%06d\\n' \"$i\"; i=$((i+1)); done\n";
-        out << "exit 0\n";
+        out << "exit 1\n";
     }
     fs::permissions(hook,
                     fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write |
                     fs::perms::group_exec | fs::perms::group_read |
                     fs::perms::others_exec | fs::perms::others_read);
 
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git rev-parse HEAD > before_head.txt"), 0);
     const auto result = git_commit(test_workspace, "killed", 40);
     EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
     EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
     EXPECT_TRUE(result["commit_sha"].get<std::string>().empty()) << result.dump();
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git rev-parse HEAD > after_head.txt"), 0);
+    std::ifstream before_in(fs::path(test_workspace) / "before_head.txt");
+    std::ifstream after_in(fs::path(test_workspace) / "after_head.txt");
+    std::string before_head;
+    std::string after_head;
+    std::getline(before_in, before_head);
+    std::getline(after_in, after_head);
+    EXPECT_EQ(after_head, before_head) << result.dump();
 }
 
 TEST_F(RepoToolsTest, GitCommitDoesNotReturnOldHeadWhenCommandWasKilledEarly) {
@@ -714,7 +749,7 @@ TEST_F(RepoToolsTest, GitCommitDoesNotReturnOldHeadWhenCommandWasKilledEarly) {
     create_file("tracked.txt", "changed\n");
     ASSERT_TRUE(git_add(test_workspace, {"tracked.txt"})["ok"].get<bool>());
 
-    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "commit-msg";
+    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "pre-commit";
     {
         std::ofstream out(hook);
         out << "#!/bin/sh\n";
@@ -728,8 +763,7 @@ TEST_F(RepoToolsTest, GitCommitDoesNotReturnOldHeadWhenCommandWasKilledEarly) {
                     fs::perms::others_exec | fs::perms::others_read);
 
     const auto result = git_commit(test_workspace, "killed", 40);
-    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
-    EXPECT_TRUE(result["commit_sha"].get<std::string>().empty()) << result.dump();
+    EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
     std::ifstream before_in(fs::path(test_workspace) / "before_head.txt");
     std::string before_head;
     std::getline(before_in, before_head);
@@ -756,6 +790,68 @@ TEST_F(RepoToolsTest, GitCommitStderrOnlyFailureDoesNotPrefixErrorWithNewline) {
     const auto result = git_commit(test_workspace, "stderr only");
     EXPECT_FALSE(result["ok"].get<bool>());
     EXPECT_EQ(result["error"].get<std::string>(), "stderr-only-hook-failure");
+}
+
+TEST_F(RepoToolsTest, GitCommitIgnoresHooksWhenEnforcingWorkspaceOnlyCommits) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T"), 0);
+    fs::create_directories(fs::path(test_workspace) / "subdir");
+    create_file("subdir/inside.txt", "inside\n");
+    create_file("outside.txt", "outside\n");
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git add subdir/inside.txt >/dev/null 2>&1"), 0);
+
+    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "pre-commit";
+    {
+        std::ofstream out(hook);
+        out << "#!/bin/sh\n";
+        out << "printf 'mutated by hook\\n' > outside.txt\n";
+        out << "git add outside.txt\n";
+        out << "exit 0\n";
+    }
+    fs::permissions(hook,
+                    fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write |
+                    fs::perms::group_exec | fs::perms::group_read |
+                    fs::perms::others_exec | fs::perms::others_read);
+
+    const auto result = git_commit((fs::path(test_workspace) / "subdir").string(), "inside only");
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+    ASSERT_EQ(run_bash("cd '" + test_workspace +
+                       "' && test \"$(git show HEAD:subdir/inside.txt)\" = \"inside\""), 0);
+    ASSERT_NE(run_bash("cd '" + test_workspace + "' && git show HEAD:outside.txt >/dev/null 2>&1"), 0);
+}
+
+TEST_F(RepoToolsTest, GitCommitKilledEarlyAfterHeadAdvanceReturnsSuccess) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " printf 'base\\n' > tracked.txt &&"
+                       " git add tracked.txt >/dev/null 2>&1 &&"
+                       " git commit -m init >/dev/null 2>&1 &&"
+                       " git rev-parse HEAD > before_head.txt"), 0);
+    create_file("tracked.txt", "changed\n");
+    ASSERT_TRUE(git_add(test_workspace, {"tracked.txt"})["ok"].get<bool>());
+
+    const fs::path hook = fs::path(test_workspace) / ".git" / "hooks" / "post-commit";
+    {
+        std::ofstream out(hook);
+        out << "#!/bin/sh\n";
+        out << "i=0\n";
+        out << "while [ $i -lt 200000 ]; do printf 'post-commit-line-%06d\\n' \"$i\"; i=$((i+1)); done\n";
+        out << "exit 0\n";
+    }
+    fs::permissions(hook,
+                    fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write |
+                    fs::perms::group_exec | fs::perms::group_read |
+                    fs::perms::others_exec | fs::perms::others_read);
+
+    const auto result = git_commit(test_workspace, "post noisy", 40);
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_TRUE(result["truncated"].get<bool>()) << result.dump();
+    EXPECT_FALSE(result["commit_sha"].get<std::string>().empty()) << result.dump();
+
+    std::ifstream before_in(fs::path(test_workspace) / "before_head.txt");
+    std::string before_head;
+    std::getline(before_in, before_head);
+    EXPECT_NE(result["commit_sha"].get<std::string>(), before_head) << result.dump();
 }
 
 // ---------------------------------------------------------------------------
