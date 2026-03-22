@@ -441,10 +441,10 @@ TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutMutatingApprovalHasNoSid
     std::filesystem::remove_all(ws);
 }
 
-TEST(SchemaAndArgsToleranceTest, GitCommitRequiresExecutionApprovalEvenIfMutatingAllowed) {
+TEST(SchemaAndArgsToleranceTest, GitCommitRequiresMutatingApprovalEvenIfExecutionAllowed) {
     const auto ws =
         (std::filesystem::temp_directory_path() /
-         ("nano_git_commit_exec_req_" + std::to_string(getpid())))
+         ("nano_git_commit_mutating_req_" + std::to_string(getpid())))
             .string();
     std::filesystem::remove_all(ws);
     std::filesystem::create_directories(ws);
@@ -456,8 +456,8 @@ TEST(SchemaAndArgsToleranceTest, GitCommitRequiresExecutionApprovalEvenIfMutatin
 
     AgentConfig config;
     config.workspace_abs = ws;
-    config.allow_mutating_tools = true;
-    config.allow_execution_tools = false;
+    config.allow_mutating_tools = false;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_commit";
@@ -466,15 +466,15 @@ TEST(SchemaAndArgsToleranceTest, GitCommitRequiresExecutionApprovalEvenIfMutatin
     const json result = json::parse(execute_tool(tc, config));
     EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
     EXPECT_EQ(result["status"], "blocked");
-    EXPECT_EQ(result["category"], "execution");
+    EXPECT_EQ(result["category"], "mutating");
 
     std::filesystem::remove_all(ws);
 }
 
-TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutExecutionApprovalHasNoSideEffects) {
+TEST(SchemaAndArgsToleranceTest, GitCommitDoesNotRequireExecutionApprovalWhenMutatingAllowed) {
     const auto ws =
         (std::filesystem::temp_directory_path() /
-         ("nano_git_commit_exec_blocked_" + std::to_string(getpid())))
+         ("nano_git_commit_exec_allowed_" + std::to_string(getpid())))
             .string();
     std::filesystem::remove_all(ws);
     std::filesystem::create_directories(ws);
@@ -492,25 +492,17 @@ TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutExecutionApprovalHasNoSi
     config.allow_mutating_tools = true;
     config.allow_execution_tools = false;
 
-    ASSERT_EQ(run_bash("cd '" + ws + "' && git rev-parse HEAD > head_before.txt"), 0);
-
     ToolCall tc;
     tc.name = "git_commit";
-    tc.arguments = {{"message", "blocked commit"}};
+    tc.arguments = {{"message", "allowed commit"}};
 
     const json result = json::parse(execute_tool(tc, config));
-    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
-    EXPECT_EQ(result["status"], "blocked");
-    EXPECT_EQ(result["category"], "execution");
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+    ASSERT_TRUE(result.contains("commit_sha"));
+    EXPECT_FALSE(result["commit_sha"].get<std::string>().empty()) << result.dump();
 
-    ASSERT_EQ(run_bash("cd '" + ws + "' && git rev-parse HEAD > head_after.txt"), 0);
-    std::ifstream before(std::filesystem::path(ws) / "head_before.txt");
-    std::ifstream after(std::filesystem::path(ws) / "head_after.txt");
-    std::string before_sha;
-    std::string after_sha;
-    std::getline(before, before_sha);
-    std::getline(after, after_sha);
-    EXPECT_EQ(before_sha, after_sha);
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git diff --cached --quiet -- tracked.txt"), 0)
+        << "successful git_commit should consume staged changes";
 
     std::filesystem::remove_all(ws);
 }
@@ -1179,7 +1171,7 @@ TEST(SchemaAndArgsToleranceTest, GitAddRejectsEmptyPathspecsAtRuntime) {
 TEST(SchemaAndArgsToleranceTest, GitCommitRejectsEmptyMessageAtRuntime) {
     AgentConfig config;
     config.workspace_abs = ".";
-    config.allow_execution_tools = true;
+    config.allow_mutating_tools = true;
 
     ToolCall tc;
     tc.name = "git_commit";

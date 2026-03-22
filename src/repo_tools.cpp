@@ -166,12 +166,16 @@ bool flush_excess_stdout_buffer(std::string* stdout_buffer,
     return true;
 }
 
-std::string normalize_git_repo_error(std::string failure) {
-    failure = trim_line_endings(std::move(failure));
-    std::string folded = failure;
-    std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
+std::string ascii_lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
+    return text;
+}
+
+std::string normalize_git_repo_error(std::string failure) {
+    failure = trim_line_endings(std::move(failure));
+    const std::string folded = ascii_lower(failure);
     if (folded.find("not a git repository") != std::string::npos) {
         return "Current workspace is not a git repository.";
     }
@@ -191,10 +195,7 @@ std::string normalize_git_commit_error(const std::string& stdout_text,
         combined += stderr_text;
     }
     combined = trim_line_endings(std::move(combined));
-    std::string folded = combined;
-    std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    const std::string folded = ascii_lower(combined);
     if (folded.find("nothing to commit") != std::string::npos ||
         folded.find("no changes added to commit") != std::string::npos) {
         return "No staged changes to commit.";
@@ -880,9 +881,6 @@ GitTextCommandResult run_git_text_command(const std::string& git_binary,
     }
     result.stderr_text = trim_line_endings(std::move(result.stderr_text));
     result.truncated = result.truncated || stderr_truncated;
-    if (result.killed_early && result.truncated) {
-        result.exit_code = 0;
-    }
     return result;
 }
 
@@ -2017,10 +2015,7 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         };
     }
 
-    std::vector<std::string> args = {
-        git_binary,
-        "-c", "commit.gpgSign=false",
-    };
+    std::vector<std::string> args = {git_binary};
     if (!workspace_prefix.empty()) {
         args.push_back("-c");
         args.push_back("core.hooksPath=/dev/null");

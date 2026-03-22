@@ -820,6 +820,21 @@ TEST_F(RepoToolsTest, GitCommitIgnoresHooksWhenEnforcingWorkspaceOnlyCommits) {
     ASSERT_NE(run_bash("cd '" + test_workspace + "' && git show HEAD:outside.txt >/dev/null 2>&1"), 0);
 }
 
+TEST_F(RepoToolsTest, GitCommitRespectsRepositorySigningPolicy) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " git config commit.gpgSign true &&"
+                       " git config gpg.program /definitely/missing/gpg"), 0);
+    create_file("tracked.txt", "hello\n");
+    ASSERT_TRUE(git_add(test_workspace, {"tracked.txt"})["ok"].get<bool>());
+
+    const auto result = git_commit(test_workspace, "signed commit");
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_TRUE(result["commit_sha"].get<std::string>().empty()) << result.dump();
+    EXPECT_NE(result["error"].get<std::string>().find("gpg"), std::string::npos) << result.dump();
+    ASSERT_NE(run_bash("cd '" + test_workspace + "' && git rev-parse HEAD >/dev/null 2>&1"), 0);
+}
+
 TEST_F(RepoToolsTest, GitCommitKilledEarlyAfterHeadAdvanceReturnsSuccess) {
     ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
                        " git config user.email t@t.com && git config user.name T &&"
