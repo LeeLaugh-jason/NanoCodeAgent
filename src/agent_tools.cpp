@@ -113,6 +113,14 @@ bool optional_bool_arg(const ToolCall& cmd, const char* key, bool default_value 
     return value.get<bool>();
 }
 
+std::string require_non_empty_string_arg(const ToolCall& cmd, const char* key, const char* tool_name) {
+    const std::string value = require_string_arg(cmd, key, tool_name);
+    if (value.empty()) {
+        throw std::runtime_error("Argument '" + std::string(key) + "' for " + tool_name + " must not be empty.");
+    }
+    return value;
+}
+
 size_t parse_bounded_output_bytes_arg(const ToolCall& cmd, const char* key, size_t default_value) {
     const size_t parsed = optional_size_arg(cmd, key, default_value);
     if (parsed == 0 || parsed > kMaxBuildToolOutputBytes) {
@@ -478,6 +486,46 @@ ToolRegistry build_default_tool_registry() {
         .max_output_bytes = kMaxRepoOutputBytes,
         .execute = [](const ToolCall&, const AgentConfig& config, size_t output_limit) {
             return git_status(config.workspace_abs, 0, output_limit);
+        }
+    });
+
+    register_or_throw(&registry, ToolDescriptor{
+        .name = "git_add",
+        .description = "Stages explicitly listed git pathspecs into the index.",
+        .category = ToolCategory::Mutating,
+        .requires_approval = true,
+        .json_schema = make_parameters_schema({
+            {"pathspecs", {
+                {"type", "array"},
+                {"items", {{"type", "string"}}},
+                {"description", "Explicit git pathspecs to stage. Must contain at least one entry."}
+            }}
+        }, {"pathspecs"}),
+        .max_output_bytes = kMaxRepoOutputBytes,
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+            const std::vector<std::string> pathspecs = optional_string_array_arg_strict(cmd, "pathspecs");
+            if (pathspecs.empty()) {
+                throw std::runtime_error("Argument 'pathspecs' for git_add must contain at least one pathspec.");
+            }
+            return git_add(config.workspace_abs, pathspecs, output_limit);
+        }
+    });
+
+    register_or_throw(&registry, ToolDescriptor{
+        .name = "git_commit",
+        .description = "Creates a git commit from the currently staged index changes.",
+        .category = ToolCategory::Mutating,
+        .requires_approval = true,
+        .json_schema = make_parameters_schema({
+            {"message", {
+                {"type", "string"},
+                {"description", "Commit message for the staged index changes."}
+            }}
+        }, {"message"}),
+        .max_output_bytes = kMaxRepoOutputBytes,
+        .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
+            const std::string message = require_non_empty_string_arg(cmd, "message", "git_commit");
+            return git_commit(config.workspace_abs, message, output_limit);
         }
     });
 

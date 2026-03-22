@@ -39,6 +39,16 @@ struct ChildProcess {
     int stderr_fd = -1;
 };
 
+struct GitTextCommandResult {
+    bool launched = false;
+    std::string stdout_text;
+    std::string stderr_text;
+    int exit_code = -1;
+    bool truncated = false;
+    bool killed_early = false;
+    std::string err;
+};
+
 void close_fd(int fd) {
     if (fd >= 0) {
         close(fd);
@@ -166,6 +176,20 @@ std::string normalize_git_repo_error(std::string failure) {
         return "Current workspace is not a git repository.";
     }
     return failure;
+}
+
+std::string normalize_git_commit_error(const std::string& stdout_text,
+                                       const std::string& stderr_text) {
+    const std::string combined = trim_line_endings(stdout_text + "\n" + stderr_text);
+    std::string folded = combined;
+    std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (folded.find("nothing to commit") != std::string::npos ||
+        folded.find("no changes added to commit") != std::string::npos) {
+        return "No staged changes to commit.";
+    }
+    return normalize_git_repo_error(combined);
 }
 
 size_t clamp_git_context_lines(size_t context_lines) {
@@ -818,6 +842,28 @@ bool stream_command_stdout_records(const std::string& executable,
     }
 
     return err == nullptr || err->empty();
+}
+
+GitTextCommandResult run_git_text_command(const std::string& git_binary,
+                                          const std::vector<std::string>& args,
+                                          const std::string& workspace_abs,
+                                          size_t output_limit) {
+    GitTextCommandResult result;
+    auto on_line = [&](const std::string& line) -> bool {
+        return append_bounded_output_line(&result.stdout_text, line, output_limit, &result.truncated);
+    };
+
+    result.launched = stream_command_stdout_lines(git_binary, args, workspace_abs,
+                                                  on_line, &result.stderr_text, &result.exit_code,
+                                                  &result.killed_early, &result.err, output_limit);
+    if (!result.stdout_text.empty() && result.stdout_text.back() == '\n') {
+        result.stdout_text.pop_back();
+    }
+    result.stderr_text = trim_line_endings(std::move(result.stderr_text));
+    if (result.killed_early && result.truncated) {
+        result.exit_code = 0;
+    }
+    return result;
 }
 
 std::string join_relative_path(const std::string& base, const std::string& child) {
@@ -1571,6 +1617,165 @@ nlohmann::json git_show(const std::string& workspace_abs,
         {"stderr", trim_line_endings(stderr_text)},
         {"exit_code", exit_code},
         {"truncated", truncated},
+        {"error", ""}
+    };
+}
+
+nlohmann::json git_add(const std::string& workspace_abs,
+                       const std::vector<std::string>& pathspecs,
+                       size_t output_limit) {
+    if (pathspecs.empty()) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"truncated", false},
+            {"error", "Argument 'pathspecs' for git_add must contain at least one pathspec."}
+        };
+    }
+
+    const std::string git_binary = find_executable_in_path("git");
+    if (git_binary.empty()) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"truncated", false},
+            {"error", "git is not installed or not executable in this environment."}
+        };
+    }
+
+    std::vector<std::string> args = {git_binary, "add", "--"};
+    args.insert(args.end(), pathspecs.begin(), pathspecs.end());
+
+    GitTextCommandResult command = run_git_text_command(git_binary, args, workspace_abs, output_limit);
+    if (!command.launched) {
+        if (command.err.empty()) {
+            command.err = command.stderr_text;
+        }
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", command.stderr_text},
+            {"exit_code", command.exit_code},
+            {"truncated", false},
+            {"error", command.err.empty() ? "git add failed." : command.err}
+        };
+    }
+
+    if (command.exit_code != 0) {
+        const std::string failure = normalize_git_repo_error(command.stderr_text);
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", command.exit_code},
+            {"truncated", false},
+            {"error", failure.empty() ? "git add exited with code " + std::to_string(command.exit_code) : failure}
+        };
+    }
+
+    return {
+        {"ok", true},
+        {"stdout", command.stdout_text},
+        {"stderr", command.stderr_text},
+        {"exit_code", command.exit_code},
+        {"truncated", command.truncated},
+        {"error", ""}
+    };
+}
+
+nlohmann::json git_commit(const std::string& workspace_abs,
+                          const std::string& message,
+                          size_t output_limit) {
+    if (message.empty()) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", "Argument 'message' for git_commit must not be empty."}
+        };
+    }
+
+    const std::string git_binary = find_executable_in_path("git");
+    if (git_binary.empty()) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", "git is not installed or not executable in this environment."}
+        };
+    }
+
+    const std::vector<std::string> args = {
+        git_binary,
+        "-c", "commit.gpgSign=false",
+        "commit",
+        "--cleanup=strip",
+        "-m", message
+    };
+
+    GitTextCommandResult command = run_git_text_command(git_binary, args, workspace_abs, output_limit);
+    if (!command.launched) {
+        if (command.err.empty()) {
+            command.err = command.stderr_text;
+        }
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", command.stderr_text},
+            {"exit_code", command.exit_code},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", command.err.empty() ? "git commit failed." : command.err}
+        };
+    }
+
+    if (command.exit_code != 0) {
+        const std::string failure = normalize_git_commit_error(command.stdout_text, command.stderr_text);
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", command.exit_code},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", failure.empty() ? "git commit exited with code " + std::to_string(command.exit_code) : failure}
+        };
+    }
+
+    const std::vector<std::string> sha_args = {git_binary, "rev-parse", "HEAD"};
+    GitTextCommandResult sha_result = run_git_text_command(git_binary, sha_args, workspace_abs, 0);
+    if (!sha_result.launched || sha_result.exit_code != 0 || sha_result.stdout_text.empty()) {
+        const std::string sha_error = sha_result.err.empty()
+            ? normalize_git_repo_error(sha_result.stderr_text)
+            : sha_result.err;
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", sha_result.exit_code},
+            {"commit_sha", ""},
+            {"truncated", command.truncated},
+            {"error", sha_error.empty() ? "git commit succeeded but failed to resolve HEAD." : sha_error}
+        };
+    }
+
+    return {
+        {"ok", true},
+        {"stdout", command.stdout_text},
+        {"stderr", command.stderr_text},
+        {"exit_code", command.exit_code},
+        {"commit_sha", trim_line_endings(sha_result.stdout_text)},
+        {"truncated", command.truncated},
         {"error", ""}
     };
 }

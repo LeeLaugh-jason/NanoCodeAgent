@@ -403,6 +403,111 @@ TEST_F(RepoToolsTest, GitStatusExecutorEnforcesOutputLimit) {
     EXPECT_EQ(result["returned"].get<size_t>(), result["entries"].size());
 }
 
+TEST_F(RepoToolsTest, GitAddRejectsEmptyPathspecs) {
+    const auto result = git_add(test_workspace, {});
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["exit_code"].get<int>(), -1);
+    EXPECT_NE(result["error"].get<std::string>().find("pathspec"), std::string::npos);
+}
+
+TEST_F(RepoToolsTest, GitAddFailsGracefullyOutsideGitRepo) {
+    const auto result = git_add(test_workspace, {"tracked.txt"});
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_NE(result["error"].get<std::string>().find("git repository"), std::string::npos);
+}
+
+TEST_F(RepoToolsTest, GitAddStagesOnlyRequestedPathspecs) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T"), 0);
+    create_file("only.txt", "only\n");
+    create_file("other.txt", "other\n");
+
+    const auto add_result = git_add(test_workspace, {"only.txt"});
+    ASSERT_TRUE(add_result["ok"].get<bool>()) << add_result.dump();
+
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && ! git diff --cached --quiet -- only.txt"), 0);
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git diff --cached --quiet -- other.txt"), 0);
+}
+
+TEST_F(RepoToolsTest, GitAddHandlesDashPrefixedFilename) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T"), 0);
+    create_file("-dash.txt", "dash\n");
+
+    const auto result = git_add(test_workspace, {"-dash.txt"});
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && ! git diff --cached --quiet -- -- '-dash.txt'"), 0);
+}
+
+TEST_F(RepoToolsTest, GitCommitRejectsEmptyMessage) {
+    const auto result = git_commit(test_workspace, "");
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["exit_code"].get<int>(), -1);
+    EXPECT_NE(result["error"].get<std::string>().find("message"), std::string::npos);
+}
+
+TEST_F(RepoToolsTest, GitCommitFailsGracefullyOutsideGitRepo) {
+    const auto result = git_commit(test_workspace, "msg");
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_NE(result["error"].get<std::string>().find("git repository"), std::string::npos);
+}
+
+TEST_F(RepoToolsTest, GitCommitWithoutStagedChangesReturnsReadableError) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " printf 'base\\n' > tracked.txt &&"
+                       " git add tracked.txt >/dev/null 2>&1 &&"
+                       " git commit -m init >/dev/null 2>&1"), 0);
+    create_file("tracked.txt", "changed but unstaged\n");
+
+    const auto result = git_commit(test_workspace, "second");
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_NE(result["error"].get<std::string>().find("staged"), std::string::npos);
+    EXPECT_TRUE(!result["stdout"].get<std::string>().empty() ||
+                !result["stderr"].get<std::string>().empty());
+}
+
+TEST_F(RepoToolsTest, GitCommitCreatesCommitFromStagedIndex) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " printf 'base\\n' > staged.txt &&"
+                       " printf 'keep\\n' > unstaged.txt &&"
+                       " git add staged.txt unstaged.txt >/dev/null 2>&1 &&"
+                       " git commit -m init >/dev/null 2>&1"), 0);
+
+    create_file("staged.txt", "staged change\n");
+    create_file("unstaged.txt", "worktree only\n");
+    ASSERT_TRUE(git_add(test_workspace, {"staged.txt"})["ok"].get<bool>());
+
+    const auto result = git_commit(test_workspace, "second");
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+
+    ASSERT_EQ(run_bash("cd '" + test_workspace +
+                       "' && test \"$(git show HEAD:staged.txt)\" = \"staged change\""), 0);
+    ASSERT_EQ(run_bash("cd '" + test_workspace +
+                       "' && test \"$(git show HEAD:unstaged.txt)\" = \"keep\""), 0);
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && ! git diff --quiet -- unstaged.txt"), 0);
+}
+
+TEST_F(RepoToolsTest, GitCommitReturnsCommitSha) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T"), 0);
+    create_file("tracked.txt", "hello\n");
+    ASSERT_TRUE(git_add(test_workspace, {"tracked.txt"})["ok"].get<bool>());
+
+    const auto result = git_commit(test_workspace, "init");
+    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
+    ASSERT_TRUE(result.contains("commit_sha"));
+    const std::string sha = result["commit_sha"].get<std::string>();
+    EXPECT_FALSE(sha.empty());
+
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git rev-parse HEAD > head.txt"), 0);
+    std::ifstream in(fs::path(test_workspace) / "head.txt");
+    std::string head;
+    std::getline(in, head);
+    EXPECT_EQ(sha, head);
+}
+
 // ---------------------------------------------------------------------------
 // GitDiffTest: git_diff tool
 // ---------------------------------------------------------------------------
