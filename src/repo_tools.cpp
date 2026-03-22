@@ -180,7 +180,17 @@ std::string normalize_git_repo_error(std::string failure) {
 
 std::string normalize_git_commit_error(const std::string& stdout_text,
                                        const std::string& stderr_text) {
-    const std::string combined = trim_line_endings(stdout_text + "\n" + stderr_text);
+    std::string combined;
+    if (!stdout_text.empty()) {
+        combined += stdout_text;
+    }
+    if (!stderr_text.empty()) {
+        if (!combined.empty()) {
+            combined.push_back('\n');
+        }
+        combined += stderr_text;
+    }
+    combined = trim_line_endings(std::move(combined));
     std::string folded = combined;
     std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -895,6 +905,10 @@ bool resolve_workspace_relative_git_path(const std::string& workspace_abs,
         if (err) *err = "Git pathspec magic is not supported for git_add.";
         return false;
     }
+    if (input.rfind(":/", 0) == 0) {
+        if (err) *err = "Git pathspec magic is not supported for git_add.";
+        return false;
+    }
 
     AgentConfig cfg;
     cfg.workspace_abs = workspace_abs;
@@ -959,7 +973,7 @@ bool list_staged_paths(const std::string& git_binary,
         git_binary,
         "diff",
         "--cached",
-        "--name-only",
+        "--name-status",
         "-z",
         "--"
     };
@@ -969,21 +983,57 @@ bool list_staged_paths(const std::string& git_binary,
     }
 
     bool killed_early = false;
-    return stream_command_stdout_records(
+    std::vector<std::string> records;
+    const bool launched = stream_command_stdout_records(
         git_binary,
         args,
         workspace_abs,
         '\0',
         [&](const std::string& record) -> bool {
-            if (!record.empty() && staged_paths) {
-                staged_paths->push_back(fs::path(record).lexically_normal().generic_string());
-            }
+            records.push_back(record);
             return true;
         },
         stderr_text,
         exit_code,
         &killed_early,
         err);
+    if (!launched) {
+        return false;
+    }
+
+    for (size_t i = 0; i < records.size(); ++i) {
+        const std::string& status = records[i];
+        if (status.empty()) {
+            continue;
+        }
+
+        const auto push_path = [&](const std::string& path_text) {
+            if (!path_text.empty() && staged_paths) {
+                staged_paths->push_back(fs::path(path_text).lexically_normal().generic_string());
+            }
+        };
+
+        const char code = status[0];
+        if ((code == 'R' || code == 'C') && status.size() >= 2) {
+            if (i + 2 >= records.size()) {
+                if (err) *err = "Failed to parse staged rename/copy paths before git commit.";
+                return false;
+            }
+            push_path(records[i + 1]);
+            push_path(records[i + 2]);
+            i += 2;
+            continue;
+        }
+
+        if (i + 1 >= records.size()) {
+            if (err) *err = "Failed to parse staged paths before git commit.";
+            return false;
+        }
+        push_path(records[i + 1]);
+        i += 1;
+    }
+
+    return true;
 }
 
 std::string join_relative_path(const std::string& base, const std::string& child) {
@@ -1931,6 +1981,18 @@ nlohmann::json git_commit(const std::string& workspace_abs,
             {"commit_sha", ""},
             {"truncated", command.truncated},
             {"error", command.err.empty() ? "git commit failed." : command.err}
+        };
+    }
+
+    if (command.killed_early && command.truncated) {
+        return {
+            {"ok", false},
+            {"stdout", command.stdout_text},
+            {"stderr", command.stderr_text},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", command.truncated},
+            {"error", "git commit output exceeded the configured limit before the command completed."}
         };
     }
 
