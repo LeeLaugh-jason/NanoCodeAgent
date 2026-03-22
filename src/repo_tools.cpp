@@ -888,7 +888,7 @@ bool starts_with_path_component(const std::string& path, const std::string& pref
     if (prefix.empty()) {
         return true;
     }
-    return path == prefix || path.rfind(prefix + "/", 0) == 0;
+    return path == prefix || path.starts_with(prefix + "/");
 }
 
 bool resolve_workspace_relative_git_path(const std::string& workspace_abs,
@@ -947,7 +947,7 @@ bool get_repo_root_and_workspace_prefix(const std::string& git_binary,
         if (err) *err = "Current workspace is not inside the git repository root.";
         return false;
     }
-    if (relative_text == ".." || relative_text.rfind("../", 0) == 0) {
+    if (relative_text == ".." || relative_text.starts_with("../")) {
         if (err) *err = "Current workspace is not inside the git repository root.";
         return false;
     }
