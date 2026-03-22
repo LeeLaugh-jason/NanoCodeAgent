@@ -514,7 +514,7 @@ ToolRegistry build_default_tool_registry() {
     register_or_throw(&registry, ToolDescriptor{
         .name = "git_commit",
         .description = "Creates a git commit from the currently staged index changes.",
-        .category = ToolCategory::Mutating,
+        .category = ToolCategory::Execution,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"message", {

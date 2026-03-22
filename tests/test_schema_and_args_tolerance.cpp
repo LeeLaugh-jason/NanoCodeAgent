@@ -441,6 +441,80 @@ TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutMutatingApprovalHasNoSid
     std::filesystem::remove_all(ws);
 }
 
+TEST(SchemaAndArgsToleranceTest, GitCommitRequiresExecutionApprovalEvenIfMutatingAllowed) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_git_commit_exec_req_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " printf 'hello\\n' > tracked.txt &&"
+                       " git add tracked.txt >/dev/null 2>&1"), 0);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
+    config.allow_execution_tools = false;
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    tc.arguments = {{"message", "blocked commit"}};
+
+    const json result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "execution");
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutExecutionApprovalHasNoSideEffects) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_git_commit_exec_blocked_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T &&"
+                       " printf 'base\\n' > tracked.txt &&"
+                       " git add tracked.txt >/dev/null 2>&1 &&"
+                       " git commit -m init >/dev/null 2>&1 &&"
+                       " printf 'next\\n' > tracked.txt &&"
+                       " git add tracked.txt >/dev/null 2>&1"), 0);
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
+    config.allow_execution_tools = false;
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git rev-parse HEAD > head_before.txt"), 0);
+
+    ToolCall tc;
+    tc.name = "git_commit";
+    tc.arguments = {{"message", "blocked commit"}};
+
+    const json result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "execution");
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git rev-parse HEAD > head_after.txt"), 0);
+    std::ifstream before(std::filesystem::path(ws) / "head_before.txt");
+    std::ifstream after(std::filesystem::path(ws) / "head_after.txt");
+    std::string before_sha;
+    std::string after_sha;
+    std::getline(before, before_sha);
+    std::getline(after, after_sha);
+    EXPECT_EQ(before_sha, after_sha);
+
+    std::filesystem::remove_all(ws);
+}
+
 TEST(SchemaAndArgsToleranceTest, SchemaIncludesBuildAndTestSafeTools) {
     json schema = get_agent_tools_schema();
     json build_params;
@@ -1059,6 +1133,7 @@ TEST(SchemaAndArgsToleranceTest, ExecuteToolDispatchesGitAddAndGitCommit) {
     AgentConfig config;
     config.workspace_abs = ws;
     config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
 
     ToolCall add_call;
     add_call.name = "git_add";
@@ -1104,7 +1179,7 @@ TEST(SchemaAndArgsToleranceTest, GitAddRejectsEmptyPathspecsAtRuntime) {
 TEST(SchemaAndArgsToleranceTest, GitCommitRejectsEmptyMessageAtRuntime) {
     AgentConfig config;
     config.workspace_abs = ".";
-    config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_commit";

@@ -551,6 +551,7 @@ bool stream_command_stdout_lines(const std::string& executable,
                                  std::string* stderr_text,
                                  int* exit_code,
                                  bool* killed_early,
+                                 bool* stderr_truncated,
                                  std::string* err,
                                  size_t output_limit = 0) {
     ChildProcess child;
@@ -561,6 +562,7 @@ bool stream_command_stdout_lines(const std::string& executable,
     if (stderr_text) stderr_text->clear();
     if (exit_code) *exit_code = -1;
     if (killed_early) *killed_early = false;
+    if (stderr_truncated) *stderr_truncated = false;
 
     std::string stdout_buffer;
     char buffer[4096];
@@ -650,6 +652,11 @@ bool stream_command_stdout_lines(const std::string& executable,
                         if (stderr_text && stderr_text->size() < kMaxCommandStderrBytes) {
                             const size_t keep = std::min(static_cast<size_t>(n), kMaxCommandStderrBytes - stderr_text->size());
                             stderr_text->append(buffer, keep);
+                            if (keep < static_cast<size_t>(n) && stderr_truncated) {
+                                *stderr_truncated = true;
+                            }
+                        } else if (stderr_truncated) {
+                            *stderr_truncated = true;
                         }
                         continue;
                     }
@@ -849,21 +856,134 @@ GitTextCommandResult run_git_text_command(const std::string& git_binary,
                                           const std::string& workspace_abs,
                                           size_t output_limit) {
     GitTextCommandResult result;
+    bool stderr_truncated = false;
     auto on_line = [&](const std::string& line) -> bool {
         return append_bounded_output_line(&result.stdout_text, line, output_limit, &result.truncated);
     };
 
     result.launched = stream_command_stdout_lines(git_binary, args, workspace_abs,
                                                   on_line, &result.stderr_text, &result.exit_code,
-                                                  &result.killed_early, &result.err, output_limit);
+                                                  &result.killed_early, &stderr_truncated,
+                                                  &result.err, output_limit);
     if (!result.stdout_text.empty() && result.stdout_text.back() == '\n') {
         result.stdout_text.pop_back();
     }
     result.stderr_text = trim_line_endings(std::move(result.stderr_text));
+    result.truncated = result.truncated || stderr_truncated;
     if (result.killed_early && result.truncated) {
         result.exit_code = 0;
     }
     return result;
+}
+
+bool starts_with_path_component(const std::string& path, const std::string& prefix) {
+    if (prefix.empty()) {
+        return true;
+    }
+    return path == prefix || path.rfind(prefix + "/", 0) == 0;
+}
+
+bool resolve_workspace_relative_git_path(const std::string& workspace_abs,
+                                         const std::string& input,
+                                         std::string* normalized_rel,
+                                         std::string* err) {
+    if (input.empty()) {
+        if (err) *err = "Argument 'pathspecs' for git_add must not contain empty paths.";
+        return false;
+    }
+    if (input.rfind(":(", 0) == 0) {
+        if (err) *err = "Git pathspec magic is not supported for git_add.";
+        return false;
+    }
+
+    AgentConfig cfg;
+    cfg.workspace_abs = workspace_abs;
+
+    std::string safe_abs;
+    std::string resolve_err;
+    if (!workspace_resolve(cfg, input, &safe_abs, &resolve_err)) {
+        if (err) *err = "Path must stay within the workspace: " + resolve_err;
+        return false;
+    }
+
+    const fs::path rel_path = fs::path(safe_abs).lexically_relative(fs::path(workspace_abs));
+    if (rel_path.empty()) {
+        if (normalized_rel) *normalized_rel = ".";
+    } else {
+        if (normalized_rel) *normalized_rel = rel_path.generic_string();
+    }
+    return true;
+}
+
+bool get_repo_root_and_workspace_prefix(const std::string& git_binary,
+                                        const std::string& workspace_abs,
+                                        std::string* repo_root,
+                                        std::string* workspace_prefix,
+                                        std::string* err) {
+    const std::vector<std::string> args = {git_binary, "rev-parse", "--show-toplevel"};
+    GitTextCommandResult result = run_git_text_command(git_binary, args, workspace_abs, 0);
+    if (!result.launched) {
+        if (err) *err = result.err.empty() ? result.stderr_text : result.err;
+        return false;
+    }
+    if (result.exit_code != 0) {
+        if (err) *err = normalize_git_repo_error(result.stderr_text);
+        return false;
+    }
+
+    const fs::path repo_root_path = fs::path(trim_line_endings(result.stdout_text)).lexically_normal();
+    const fs::path workspace_path = fs::path(workspace_abs).lexically_normal();
+    const fs::path relative = workspace_path.lexically_relative(repo_root_path);
+    const std::string relative_text = relative.generic_string();
+    if (relative.empty() && workspace_path != repo_root_path) {
+        if (err) *err = "Current workspace is not inside the git repository root.";
+        return false;
+    }
+    if (relative_text == ".." || relative_text.rfind("../", 0) == 0) {
+        if (err) *err = "Current workspace is not inside the git repository root.";
+        return false;
+    }
+
+    if (repo_root) *repo_root = repo_root_path.string();
+    if (workspace_prefix) *workspace_prefix = (relative_text == "." ? "" : relative_text);
+    return true;
+}
+
+bool list_staged_paths(const std::string& git_binary,
+                       const std::string& workspace_abs,
+                       std::vector<std::string>* staged_paths,
+                       std::string* stderr_text,
+                       int* exit_code,
+                       std::string* err) {
+    const std::vector<std::string> args = {
+        git_binary,
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--"
+    };
+
+    if (staged_paths) {
+        staged_paths->clear();
+    }
+
+    bool killed_early = false;
+    return stream_command_stdout_records(
+        git_binary,
+        args,
+        workspace_abs,
+        '\0',
+        [&](const std::string& record) -> bool {
+            if (!record.empty() && staged_paths) {
+                staged_paths->push_back(fs::path(record).lexically_normal().generic_string());
+            }
+            return true;
+        },
+        stderr_text,
+        exit_code,
+        &killed_early,
+        err);
 }
 
 std::string join_relative_path(const std::string& base, const std::string& child) {
@@ -1176,7 +1296,8 @@ nlohmann::json rg_search(const std::string& workspace_abs,
         return true;
     };
 
-    if (!stream_command_stdout_lines(rg_binary, args, abs_directory, on_line, &stderr_text, &exit_code, &killed_early, &err)) {
+    if (!stream_command_stdout_lines(rg_binary, args, abs_directory, on_line, &stderr_text, &exit_code, &killed_early,
+                                     nullptr, &err)) {
         if (parse_failed) {
             err = parse_error;
         } else if (err.empty()) {
@@ -1456,7 +1577,7 @@ nlohmann::json git_diff(const std::string& workspace_abs,
 
     if (!stream_command_stdout_lines(git_binary, args, workspace_abs,
                                      on_line, &stderr_text, &exit_code,
-                                     &killed_early, &err, output_limit)) {
+                                     &killed_early, nullptr, &err, output_limit)) {
         if (err.empty()) {
             err = trim_line_endings(stderr_text);
         }
@@ -1576,7 +1697,7 @@ nlohmann::json git_show(const std::string& workspace_abs,
 
     if (!stream_command_stdout_lines(git_binary, args, workspace_abs,
                                      on_line, &stderr_text, &exit_code,
-                                     &killed_early, &err, output_limit)) {
+                                     &killed_early, nullptr, &err, output_limit)) {
         if (err.empty()) {
             err = trim_line_endings(stderr_text);
         }
@@ -1647,8 +1768,26 @@ nlohmann::json git_add(const std::string& workspace_abs,
         };
     }
 
+    std::vector<std::string> safe_paths;
+    safe_paths.reserve(pathspecs.size());
+    for (const auto& pathspec : pathspecs) {
+        std::string normalized_rel;
+        std::string validate_err;
+        if (!resolve_workspace_relative_git_path(workspace_abs, pathspec, &normalized_rel, &validate_err)) {
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", ""},
+                {"exit_code", -1},
+                {"truncated", false},
+                {"error", validate_err}
+            };
+        }
+        safe_paths.push_back(std::move(normalized_rel));
+    }
+
     std::vector<std::string> args = {git_binary, "add", "--"};
-    args.insert(args.end(), pathspecs.begin(), pathspecs.end());
+    args.insert(args.end(), safe_paths.begin(), safe_paths.end());
 
     GitTextCommandResult command = run_git_text_command(git_binary, args, workspace_abs, output_limit);
     if (!command.launched) {
@@ -1660,7 +1799,7 @@ nlohmann::json git_add(const std::string& workspace_abs,
             {"stdout", ""},
             {"stderr", command.stderr_text},
             {"exit_code", command.exit_code},
-            {"truncated", false},
+            {"truncated", command.truncated},
             {"error", command.err.empty() ? "git add failed." : command.err}
         };
     }
@@ -1672,7 +1811,7 @@ nlohmann::json git_add(const std::string& workspace_abs,
             {"stdout", command.stdout_text},
             {"stderr", command.stderr_text},
             {"exit_code", command.exit_code},
-            {"truncated", false},
+            {"truncated", command.truncated},
             {"error", failure.empty() ? "git add exited with code " + std::to_string(command.exit_code) : failure}
         };
     }
@@ -1715,6 +1854,62 @@ nlohmann::json git_commit(const std::string& workspace_abs,
         };
     }
 
+    std::string repo_root;
+    std::string workspace_prefix;
+    std::string repo_err;
+    if (!get_repo_root_and_workspace_prefix(git_binary, workspace_abs, &repo_root, &workspace_prefix, &repo_err)) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", ""},
+            {"exit_code", -1},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", repo_err.empty() ? "Failed to resolve git repository root." : repo_err}
+        };
+    }
+
+    std::vector<std::string> staged_paths;
+    std::string staged_stderr;
+    int staged_exit_code = -1;
+    std::string staged_err;
+    if (!list_staged_paths(git_binary, workspace_abs, &staged_paths, &staged_stderr, &staged_exit_code, &staged_err)) {
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", trim_line_endings(staged_stderr)},
+            {"exit_code", staged_exit_code},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", staged_err.empty() ? "Failed to inspect staged paths before git commit." : staged_err}
+        };
+    }
+    if (staged_exit_code != 0) {
+        const std::string failure = normalize_git_repo_error(staged_stderr);
+        return {
+            {"ok", false},
+            {"stdout", ""},
+            {"stderr", trim_line_endings(staged_stderr)},
+            {"exit_code", staged_exit_code},
+            {"commit_sha", ""},
+            {"truncated", false},
+            {"error", failure.empty() ? "Failed to inspect staged paths before git commit." : failure}
+        };
+    }
+    for (const auto& staged_path : staged_paths) {
+        if (!starts_with_path_component(staged_path, workspace_prefix)) {
+            return {
+                {"ok", false},
+                {"stdout", ""},
+                {"stderr", ""},
+                {"exit_code", -1},
+                {"commit_sha", ""},
+                {"truncated", false},
+                {"error", "Refusing to commit staged path outside the workspace: " + staged_path}
+            };
+        }
+    }
+
     const std::vector<std::string> args = {
         git_binary,
         "-c", "commit.gpgSign=false",
@@ -1734,7 +1929,7 @@ nlohmann::json git_commit(const std::string& workspace_abs,
             {"stderr", command.stderr_text},
             {"exit_code", command.exit_code},
             {"commit_sha", ""},
-            {"truncated", false},
+            {"truncated", command.truncated},
             {"error", command.err.empty() ? "git commit failed." : command.err}
         };
     }
@@ -1747,7 +1942,7 @@ nlohmann::json git_commit(const std::string& workspace_abs,
             {"stderr", command.stderr_text},
             {"exit_code", command.exit_code},
             {"commit_sha", ""},
-            {"truncated", false},
+            {"truncated", command.truncated},
             {"error", failure.empty() ? "git commit exited with code " + std::to_string(command.exit_code) : failure}
         };
     }
