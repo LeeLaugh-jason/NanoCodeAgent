@@ -899,11 +899,7 @@ bool resolve_workspace_relative_git_path(const std::string& workspace_abs,
         if (err) *err = "Argument 'pathspecs' for git_add must not contain empty paths.";
         return false;
     }
-    if (input.rfind(":(", 0) == 0) {
-        if (err) *err = "Git pathspec magic is not supported for git_add.";
-        return false;
-    }
-    if (input.rfind(":/", 0) == 0) {
+    if (input.front() == ':') {
         if (err) *err = "Git pathspec magic is not supported for git_add.";
         return false;
     }
@@ -1046,10 +1042,7 @@ bool resolve_head_sha(const std::string& git_binary,
     }
     if (result.exit_code != 0) {
         const std::string normalized = normalize_git_repo_error(result.stderr_text);
-        std::string folded = normalized;
-        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char ch) {
-            return static_cast<char>(std::tolower(ch));
-        });
+        const std::string folded = ascii_lower(normalized);
         if (folded.find("unknown revision or path not in the working tree") != std::string::npos ||
             folded.find("ambiguous argument 'head'") != std::string::npos ||
             folded.find("needed a single revision") != std::string::npos) {

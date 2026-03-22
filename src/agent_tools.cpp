@@ -504,9 +504,6 @@ ToolRegistry build_default_tool_registry() {
         .max_output_bytes = kMaxRepoOutputBytes,
         .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
             const std::vector<std::string> pathspecs = optional_string_array_arg_strict(cmd, "pathspecs");
-            if (pathspecs.empty()) {
-                throw std::runtime_error("Argument 'pathspecs' for git_add must contain at least one pathspec.");
-            }
             return git_add(config.workspace_abs, pathspecs, output_limit);
         }
     });
@@ -524,7 +521,7 @@ ToolRegistry build_default_tool_registry() {
         }, {"message"}),
         .max_output_bytes = kMaxRepoOutputBytes,
         .execute = [](const ToolCall& cmd, const AgentConfig& config, size_t output_limit) {
-            const std::string message = require_non_empty_string_arg(cmd, "message", "git_commit");
+            const std::string message = require_string_arg(cmd, "message", "git_commit");
             return git_commit(config.workspace_abs, message, output_limit);
         }
     });

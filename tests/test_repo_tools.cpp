@@ -478,6 +478,26 @@ TEST_F(RepoToolsTest, GitAddRejectsRepoRootPathspecMagic) {
     ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git diff --cached --quiet -- outside.txt"), 0);
 }
 
+TEST_F(RepoToolsTest, GitAddRejectsShortFormPathspecMagic) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1"), 0);
+    create_file("inside.txt", "inside\n");
+
+    const auto result = git_add(test_workspace, {":!inside.txt"});
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_NE(result["error"].get<std::string>().find("pathspec magic"), std::string::npos);
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git diff --cached --quiet -- inside.txt"), 0);
+}
+
+TEST_F(RepoToolsTest, GitAddRejectsBareColonPathspecMagic) {
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git init -b main >/dev/null 2>&1"), 0);
+    create_file("inside.txt", "inside\n");
+
+    const auto result = git_add(test_workspace, {":"});
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_NE(result["error"].get<std::string>().find("pathspec magic"), std::string::npos);
+    ASSERT_EQ(run_bash("cd '" + test_workspace + "' && git diff --cached --quiet -- inside.txt"), 0);
+}
+
 TEST_F(RepoToolsTest, GitCommitRejectsEmptyMessage) {
     const auto result = git_commit(test_workspace, "");
     EXPECT_FALSE(result["ok"].get<bool>());
