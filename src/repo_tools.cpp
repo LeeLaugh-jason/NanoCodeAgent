@@ -896,7 +896,7 @@ bool resolve_workspace_relative_git_path(const std::string& workspace_abs,
                                          std::string* normalized_rel,
                                          std::string* err) {
     if (input.empty()) {
-        if (err) *err = "Argument 'pathspecs' for git_add must not contain empty paths.";
+        if (err) *err = "Argument 'pathspecs' for git_add must not contain empty path strings.";
         return false;
     }
     if (input.front() == ':') {

@@ -410,6 +410,14 @@ TEST_F(RepoToolsTest, GitAddRejectsEmptyPathspecs) {
     EXPECT_NE(result["error"].get<std::string>().find("pathspec"), std::string::npos);
 }
 
+TEST_F(RepoToolsTest, GitAddRejectsEmptyPathStringElements) {
+    const auto result = git_add(test_workspace, {""});
+    EXPECT_FALSE(result["ok"].get<bool>());
+    EXPECT_EQ(result["exit_code"].get<int>(), -1);
+    EXPECT_EQ(result["error"].get<std::string>(),
+              "Argument 'pathspecs' for git_add must not contain empty path strings.");
+}
+
 TEST_F(RepoToolsTest, GitAddFailsGracefullyOutsideGitRepo) {
     const auto result = git_add(test_workspace, {"tracked.txt"});
     EXPECT_FALSE(result["ok"].get<bool>());
