@@ -236,6 +236,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "read_file_safe",
         .description = "Reads the complete contents of a workspace file.",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema({
             {"path", {
@@ -260,6 +262,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "write_file_safe",
         .description = "Writes string content to a workspace file, overwriting existing content.",
         .category = ToolCategory::Mutating,
+        .mutates_repository_state = true,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"path", {
@@ -287,6 +291,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "bash_execute_safe",
         .description = "Executes a bounded bash command inside the workspace.",
         .category = ToolCategory::Execution,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = true,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"command", {
@@ -319,6 +325,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "build_project_safe",
         .description = "Runs ./build.sh in debug or release mode with bounded retained output.",
         .category = ToolCategory::Execution,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = true,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"build_mode", {
@@ -368,6 +376,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "test_project_safe",
         .description = "Runs ./build.sh test with bounded retained output and a small ctest summary.",
         .category = ToolCategory::Execution,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = true,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"timeout_ms", {
@@ -415,6 +425,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "list_files_bounded",
         .description = "Lists workspace files with optional directory and extension filters.",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema({
             {"directory", {
@@ -446,6 +458,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "rg_search",
         .description = "Searches the workspace with ripgrep and returns structured matches.",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema({
             {"query", {
@@ -481,6 +495,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "git_status",
         .description = "Returns the current git working tree status for the workspace.",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema(nlohmann::json::object()),
         .max_output_bytes = kMaxRepoOutputBytes,
@@ -493,6 +509,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "git_add",
         .description = "Stages explicitly listed git pathspecs into the index.",
         .category = ToolCategory::Mutating,
+        .mutates_repository_state = true,
+        .can_execute_repo_controlled_code = true,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"pathspecs", {
@@ -512,6 +530,8 @@ ToolRegistry build_default_tool_registry() {
         .name = "git_commit",
         .description = "Creates a git commit from the currently staged index changes.",
         .category = ToolCategory::Mutating,
+        .mutates_repository_state = true,
+        .can_execute_repo_controlled_code = true,
         .requires_approval = true,
         .json_schema = make_parameters_schema({
             {"message", {
@@ -533,6 +553,8 @@ ToolRegistry build_default_tool_registry() {
                        "old_text must appear exactly once in the file. "
                        "An explicit empty new_text is valid and deletes the matched text.",
         .category = ToolCategory::Mutating,
+        .mutates_repository_state = true,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = true,
         .json_schema = nlohmann::json{
             {"type", "object"},
@@ -723,6 +745,8 @@ ToolRegistry build_default_tool_registry() {
                        "By default shows unstaged changes; set cached=true for staged changes. "
                        "Optionally filter by pathspecs and control hunk context with context_lines (default 3).",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema({
             {"cached", {
@@ -761,6 +785,8 @@ ToolRegistry build_default_tool_registry() {
                        "rev is required. Optionally disable patch or stat output, filter by pathspecs, "
                        "and control diff context with context_lines (default 3).",
         .category = ToolCategory::ReadOnly,
+        .mutates_repository_state = false,
+        .can_execute_repo_controlled_code = false,
         .requires_approval = false,
         .json_schema = make_parameters_schema({
             {"rev", {

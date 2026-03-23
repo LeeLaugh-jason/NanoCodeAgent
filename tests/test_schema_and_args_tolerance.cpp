@@ -380,6 +380,7 @@ TEST(SchemaAndArgsToleranceTest, GitAddBlockedWithoutMutatingApprovalHasNoSideEf
 
     AgentConfig config;
     config.workspace_abs = ws;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_add";
@@ -388,6 +389,48 @@ TEST(SchemaAndArgsToleranceTest, GitAddBlockedWithoutMutatingApprovalHasNoSideEf
     const json result = json::parse(execute_tool(tc, config));
     EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
     EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], json::array({"mutating"}));
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git diff --cached --quiet -- blocked.txt"), 0)
+        << "blocked git_add must not stage anything";
+
+    std::filesystem::remove_all(ws);
+}
+
+TEST(SchemaAndArgsToleranceTest, GitAddRequiresExecutionApprovalEvenIfMutatingAllowed) {
+    const auto ws =
+        (std::filesystem::temp_directory_path() /
+         ("nano_git_add_exec_req_" + std::to_string(getpid())))
+            .string();
+    std::filesystem::remove_all(ws);
+    std::filesystem::create_directories(ws);
+
+    ASSERT_EQ(run_bash("cd '" + ws + "' && git init -b main >/dev/null 2>&1 &&"
+                       " git config user.email t@t.com && git config user.name T"), 0);
+    {
+        std::ofstream out(std::filesystem::path(ws) / "blocked.txt");
+        out << "blocked\n";
+    }
+
+    AgentConfig config;
+    config.workspace_abs = ws;
+    config.allow_mutating_tools = true;
+    config.allow_execution_tools = false;
+
+    ToolCall tc;
+    tc.name = "git_add";
+    tc.arguments = {{"pathspecs", json::array({"blocked.txt"})}};
+
+    const json result = json::parse(execute_tool(tc, config));
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], json::array({"execution"}));
 
     ASSERT_EQ(run_bash("cd '" + ws + "' && git diff --cached --quiet -- blocked.txt"), 0)
         << "blocked git_add must not stage anything";
@@ -413,6 +456,7 @@ TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutMutatingApprovalHasNoSid
 
     AgentConfig config;
     config.workspace_abs = ws;
+    config.allow_execution_tools = true;
 
     const std::string before_head_cmd =
         "cd '" + ws + "' && git rev-parse HEAD > head_before.txt";
@@ -425,6 +469,10 @@ TEST(SchemaAndArgsToleranceTest, GitCommitBlockedWithoutMutatingApprovalHasNoSid
     const json result = json::parse(execute_tool(tc, config));
     EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
     EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], json::array({"mutating"}));
 
     ASSERT_EQ(run_bash("cd '" + ws + "' && git rev-parse HEAD > head_after.txt"), 0);
     std::ifstream before(std::filesystem::path(ws) / "head_before.txt");
@@ -467,14 +515,17 @@ TEST(SchemaAndArgsToleranceTest, GitCommitRequiresMutatingApprovalEvenIfExecutio
     EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
     EXPECT_EQ(result["status"], "blocked");
     EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], json::array({"mutating"}));
 
     std::filesystem::remove_all(ws);
 }
 
-TEST(SchemaAndArgsToleranceTest, GitCommitDoesNotRequireExecutionApprovalWhenMutatingAllowed) {
+TEST(SchemaAndArgsToleranceTest, GitCommitRequiresExecutionApprovalEvenIfMutatingAllowed) {
     const auto ws =
         (std::filesystem::temp_directory_path() /
-         ("nano_git_commit_exec_allowed_" + std::to_string(getpid())))
+         ("nano_git_commit_exec_req_" + std::to_string(getpid())))
             .string();
     std::filesystem::remove_all(ws);
     std::filesystem::create_directories(ws);
@@ -494,15 +545,18 @@ TEST(SchemaAndArgsToleranceTest, GitCommitDoesNotRequireExecutionApprovalWhenMut
 
     ToolCall tc;
     tc.name = "git_commit";
-    tc.arguments = {{"message", "allowed commit"}};
+    tc.arguments = {{"message", "blocked commit"}};
 
     const json result = json::parse(execute_tool(tc, config));
-    ASSERT_TRUE(result["ok"].get<bool>()) << result.dump();
-    ASSERT_TRUE(result.contains("commit_sha"));
-    EXPECT_FALSE(result["commit_sha"].get<std::string>().empty()) << result.dump();
+    EXPECT_FALSE(result["ok"].get<bool>()) << result.dump();
+    EXPECT_EQ(result["status"], "blocked");
+    EXPECT_EQ(result["category"], "mutating");
+    EXPECT_TRUE(result["requires_mutating_approval"].get<bool>());
+    EXPECT_TRUE(result["requires_execution_approval"].get<bool>());
+    EXPECT_EQ(result["missing_approvals"], json::array({"execution"}));
 
-    ASSERT_EQ(run_bash("cd '" + ws + "' && git diff --cached --quiet -- tracked.txt"), 0)
-        << "successful git_commit should consume staged changes";
+    ASSERT_EQ(run_bash("cd '" + ws + "' && ! git diff --cached --quiet -- tracked.txt"), 0)
+        << "blocked git_commit must leave staged changes untouched";
 
     std::filesystem::remove_all(ws);
 }
@@ -1146,6 +1200,7 @@ TEST(SchemaAndArgsToleranceTest, GitAddRejectsNonArrayPathspecs) {
     AgentConfig config;
     config.workspace_abs = ".";
     config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_add";
@@ -1159,6 +1214,7 @@ TEST(SchemaAndArgsToleranceTest, GitAddRejectsEmptyPathspecsAtRuntime) {
     AgentConfig config;
     config.workspace_abs = ".";
     config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_add";
@@ -1172,6 +1228,7 @@ TEST(SchemaAndArgsToleranceTest, GitCommitRejectsEmptyMessageAtRuntime) {
     AgentConfig config;
     config.workspace_abs = ".";
     config.allow_mutating_tools = true;
+    config.allow_execution_tools = true;
 
     ToolCall tc;
     tc.name = "git_commit";
