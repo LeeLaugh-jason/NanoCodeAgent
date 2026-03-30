@@ -115,38 +115,26 @@ std::expected<nlohmann::json, std::string> LlmClient::call_json(
 }
 
 std::string LlmClient::extract_json_from_response(const std::string& content) {
-    std::string trimmed;
-    for (char c : content) {
-        if (c != ' ' && c != '\n' && c != '\r' && c != '\t') {
-            trimmed += c;
-        }
-    }
-    
-    if (!trimmed.empty() && trimmed[0] == '{') {
-        size_t brace_count = 0;
-        size_t end_pos = 0;
-        for (size_t i = 0; i < trimmed.size(); ++i) {
-            if (trimmed[i] == '{') ++brace_count;
-            else if (trimmed[i] == '}') {
-                --brace_count;
-                if (brace_count == 0) {
-                    end_pos = i + 1;
-                    break;
-                }
-            }
-        }
-        if (end_pos > 0) {
-            return trimmed.substr(0, end_pos);
-        }
-    }
-    
+    // 1. Try to extract JSON from Markdown code block first
     std::regex json_block(R"(```(?:json)?\s*(\{[\s\S]*?\})\s*```)");
     std::smatch match;
     if (std::regex_search(content, match, json_block)) {
         return match[1].str();
     }
     
-    return content;
+    // 2. Fallback: find the outermost braces from first '{' to last '}'
+    const size_t first_brace = content.find('{');
+    if (first_brace == std::string::npos) {
+        return content; // No opening brace found
+    }
+    
+    const size_t last_brace = content.rfind('}');
+    if (last_brace == std::string::npos || last_brace <= first_brace) {
+        return content; // No matching closing brace
+    }
+    
+    // Return the substring including both braces
+    return content.substr(first_brace, last_brace - first_brace + 1);
 }
 
 } // namespace docgen

@@ -9,6 +9,21 @@ namespace docgen {
 
 namespace fs = std::filesystem;
 
+// Helper function matching apply_patch.cpp's behavior
+static int count_occurrences_with_overlap(const std::string& haystack,
+                                          const std::string& needle) {
+    if (needle.empty()) {
+        return 0;
+    }
+    int count = 0;
+    std::string::size_type pos = 0;
+    while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += 1;  // advance by 1, NOT by needle.size(), to detect overlaps
+    }
+    return count;
+}
+
 DocgenPipeline::DocgenPipeline(const AgentConfig& cfg, const SubagentContext& ctx)
     : config_(cfg), ctx_(ctx), llm_(std::make_unique<LlmClient>(cfg, ctx)) {}
 
@@ -56,18 +71,61 @@ std::expected<PipelineResult, std::string> DocgenPipeline::run(const std::string
             if (!patch_result || patch_result->patches.empty()) continue;
             
             auto after = original;
+            int patches_skipped = 0;
             for (const auto& p : patch_result->patches) {
-                if (p.action == PatchAction::Replace || p.action == PatchAction::Delete) {
-                    auto pos = after.find(p.old_text);
-                    if (pos != std::string::npos) {
-                        after.replace(pos, p.old_text.length(), p.new_text);
-                    }
+                // Only process known patch actions
+                if (p.action != PatchAction::Replace && p.action != PatchAction::Delete &&
+                    p.action != PatchAction::InsertBefore && p.action != PatchAction::InsertAfter) {
+                    patches_skipped++;
+                    continue;
                 }
+                
+                // Check that old_text appears exactly once (as required by apply_patch_single)
+                const int occurrences = count_occurrences_with_overlap(after, p.old_text);
+                if (occurrences != 1) {
+                    patches_skipped++;
+                    continue;
+                }
+                
+                const std::string::size_type pos = after.find(p.old_text);
+                if (pos == std::string::npos) {
+                    // Should not happen given occurrences == 1, but guard anyway
+                    patches_skipped++;
+                    continue;
+                }
+                
+                switch (p.action) {
+                    case PatchAction::Replace:
+                        after.replace(pos, p.old_text.length(), p.new_text);
+                        break;
+                    case PatchAction::Delete:
+                        after.replace(pos, p.old_text.length(), "");
+                        break;
+                    case PatchAction::InsertBefore:
+                        after.replace(pos, 0, p.new_text);
+                        break;
+                    case PatchAction::InsertAfter:
+                        after.replace(pos + p.old_text.length(), 0, p.new_text);
+                        break;
+                    default:
+                        patches_skipped++;
+                        break;
+                }
+            }
+            
+            if (patches_skipped > 0) {
+                result.patches_rejected += patches_skipped;
+            }
+            
+            // Skip review if all patches were rejected during simulation
+            if (patches_skipped == static_cast<int>(patch_result->patches.size())) {
+                continue;
             }
             
             auto review = review_patch(original, after);
             if (!review || review->verdict == ReviewVerdict::Reject) {
-                result.patches_rejected += static_cast<int>(patch_result->patches.size());
+                // Only count patches that passed simulation but failed review
+                result.patches_rejected += static_cast<int>(patch_result->patches.size()) - patches_skipped;
                 continue;
             }
             
@@ -220,8 +278,23 @@ std::vector<PatchEntry> DocgenPipeline::to_patch_entries(
     std::vector<PatchEntry> entries;
     
     for (const auto& p : patches.patches) {
-        if (p.action == PatchAction::Replace || p.action == PatchAction::Delete) {
-            entries.push_back({p.old_text, p.new_text});
+        switch (p.action) {
+            case PatchAction::Replace:
+            case PatchAction::Delete:
+                entries.push_back({p.old_text, p.new_text});
+                break;
+            case PatchAction::InsertBefore:
+                // Insert before old_text: replace old_text with new_text + old_text
+                entries.push_back({p.old_text, p.new_text + p.old_text});
+                break;
+            case PatchAction::InsertAfter:
+                // Insert after old_text: replace old_text with old_text + new_text
+                entries.push_back({p.old_text, p.old_text + p.new_text});
+                break;
+            default:
+                // Unknown action – ignore with a log warning
+                spdlog::warn("to_patch_entries: ignoring unknown patch action");
+                break;
         }
     }
     

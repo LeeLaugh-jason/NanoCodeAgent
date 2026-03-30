@@ -457,16 +457,13 @@ void compact_messages_if_needed(const AgentConfig& config,
         return;
     }
 
-    std::size_t recent_start_index;
-    if (non_system_indices.size() == kCompactionRecentNonSystemMessages) {
-        // 当非系统消息数量正好等于保留数量时，至少保留一条消息用于压缩
-        // 跳过第一条非系统消息，从第二条开始作为最近消息
-        recent_start_index = non_system_indices[1];
-        LOG_INFO("Compaction boundary case: using recent_start_index={} (second non-system message)", recent_start_index);
-    } else {
-        recent_start_index = non_system_indices[non_system_indices.size() - kCompactionRecentNonSystemMessages];
-        LOG_INFO("Compaction normal case: recent_start_index={}", recent_start_index);
-    }
+    // When non_system_indices.size() == kCompactionRecentNonSystemMessages,
+    // recent_start_index will point to the first non-system message,
+    // resulting in empty old_messages and compaction will be skipped.
+    // This matches the intuitive behavior: no extra messages to compact.
+    const std::size_t recent_start_index = non_system_indices[non_system_indices.size() - kCompactionRecentNonSystemMessages];
+    LOG_INFO("Compaction: recent_start_index={} ({} recent non-system messages retained)",
+             recent_start_index, kCompactionRecentNonSystemMessages);
     nlohmann::json old_messages = nlohmann::json::array();
     for (std::size_t i = 1; i < recent_start_index; ++i) {
         old_messages.push_back(messages[i]);
